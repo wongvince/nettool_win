@@ -109,7 +109,11 @@ private fun AdapterPage() {
     var profiles by remember { mutableStateOf(ProfileStore.load()) }; var profileName by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { scope.launch { output = runPowerShell("Get-NetAdapter | Format-Table -AutoSize; Get-NetIPConfiguration | Format-List InterfaceAlias,IPv4Address,IPv4DefaultGateway,DNSServer") } }) { Text("刷新网卡信息") }; Button(onClick = { output = runPowerShell("Get-NetAdapter | Format-List *") }) { Text("详细信息") } }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { scope.launch { output = runPowerShell("Get-NetAdapter | Format-Table -AutoSize; Get-NetIPConfiguration | Format-List InterfaceAlias,IPv4Address,IPv4DefaultGateway,DNSServer") } }) { Text("刷新网卡信息") }; Button(onClick = {
+    scope.launch {
+        output = runPowerShell("Get-NetAdapter | Format-List *")
+    }
+}) { Text("详细信息") }
         OutlinedTextField(output, {}, readOnly = true, label = { Text("本机网卡信息") }, modifier = Modifier.fillMaxWidth(), minLines = 5)
         Text("静态 IPv4 配置", color = Color.White, style = MaterialTheme.typography.titleLarge)
         Field("网卡名称（InterfaceAlias）", alias) { alias = it }; Field("IPv4 地址", ip) { ip = it }; Field("子网掩码", mask) { mask = it }; Field("默认网关（可留空）", gateway) { gateway = it }; Field("首选 DNS（可留空）", dns) { dns = it }
