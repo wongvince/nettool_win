@@ -205,9 +205,7 @@ private fun LicensePage(
     val device = remember { LicenseManager.deviceId() }
 
     Column(
-        Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         InfoCard(
