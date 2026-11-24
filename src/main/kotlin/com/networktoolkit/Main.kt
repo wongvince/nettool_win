@@ -114,6 +114,7 @@ private fun AdapterPage() {
         output = runPowerShell("Get-NetAdapter | Format-List *")
     }
 }) { Text("详细信息") }
+        }
         OutlinedTextField(output, {}, readOnly = true, label = { Text("本机网卡信息") }, modifier = Modifier.fillMaxWidth(), minLines = 5)
         Text("静态 IPv4 配置", color = Color.White, style = MaterialTheme.typography.titleLarge)
         Field("网卡名称（InterfaceAlias）", alias) { alias = it }; Field("IPv4 地址", ip) { ip = it }; Field("子网掩码", mask) { mask = it }; Field("默认网关（可留空）", gateway) { gateway = it }; Field("首选 DNS（可留空）", dns) { dns = it }
