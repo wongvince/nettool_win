@@ -33,7 +33,7 @@ private val Accent = Color(0xFF55A9F5)
 private val Light = Color(0xFFEAF2FA)
 private const val APP_VERSION = "1.0.0"
 private const val DEFAULT_RELEASE_API = "https://api.github.com/repos/OWNER/REPO/releases/latest"
-private const val PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAmFNDAHIMRLXfW6emVdWQLmsHpLILXph/fZq1FC4pUyk="
+private const val PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEABLHkBjACjcxTjOw2P6yQUuTOau4hTVzp6/1NgtH9he4="
 
 fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "NetworkToolkit 网络工程师工具箱 v1.0.0") {
