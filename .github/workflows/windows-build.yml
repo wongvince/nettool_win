@@ -13,21 +13,61 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17 x64
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          architecture: x64
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Build release installer and release app image
+      - name: Build Windows installer and portable app image
         shell: pwsh
-        run: ./build-windows.ps1
+        run: |
+          gradle packageReleaseExe createDistributable
+
+          $ErrorActionPreference = 'Stop'
+          $outputDir = Join-Path $PWD 'artifacts'
+          New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+          # Rename the generated installer to the requested stable filename.
+          $installerDir = Join-Path $PWD 'build/compose/binaries/main-release/exe'
+          $installer = Get-ChildItem -Path $installerDir -Filter '*.exe' -File |
+            Where-Object { $_.Name -notlike '*uninstall*' } |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "Windows installer EXE was not found in $installerDir"
+          }
+
+          Copy-Item $installer.FullName (Join-Path $outputDir 'NetworkToolkit-Setup.exe') -Force
+
+          # createDistributable creates a jpackage app image with its own Java runtime.
+          $appRoot = Join-Path $PWD 'build/compose/binaries/main/app'
+          $appImage = Join-Path $appRoot 'NetworkToolkit'
+          if (-not (Test-Path $appImage)) {
+            $candidate = Get-ChildItem -Path $appRoot -Directory -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($candidate) { $appImage = $candidate.FullName }
+          }
+
+          if (-not (Test-Path $appImage)) {
+            throw "Portable app image was not found under $appRoot"
+          }
+
+          $runtimeDir = Join-Path $appImage 'runtime'
+          if (-not (Test-Path $runtimeDir)) {
+            throw "Bundled Java runtime was not found in app image: $runtimeDir"
+          }
+
+          $portableZip = Join-Path $outputDir 'NetworkToolkit-Windows-x64-Portable.zip'
+          Compress-Archive -Path (Join-Path $appImage '*') -DestinationPath $portableZip -CompressionLevel Optimal -Force
+
+          Write-Host "Installer: $($outputDir)\NetworkToolkit-Setup.exe"
+          Write-Host "Portable:  $portableZip"
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
