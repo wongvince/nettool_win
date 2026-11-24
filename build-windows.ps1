@@ -43,10 +43,26 @@ foreach ($launcher in $launchers) {
 }
 
 if (-not $appImage) {
-    Write-Host 'Release app-image file listing:'
-    Get-ChildItem -Path $appBase -Recurse -Force |
-        Select-Object -ExpandProperty FullName | Write-Host
-    throw 'The RELEASE app image does not contain NetworkToolkit.exe together with runtime/bin/java.exe. Check the jpackage output above.'
+    Write-Host '========== APP IMAGE DIAGNOSTICS =========='
+
+    Write-Host '1. EXE files:'
+    Get-ChildItem $appBase -Filter '*.exe' -Recurse -File |
+        Select-Object -ExpandProperty FullName
+
+    Write-Host '2. JAVA files:'
+    Get-ChildItem $appBase -Filter 'java.exe' -Recurse -File |
+        Select-Object -ExpandProperty FullName
+
+    Write-Host '3. Runtime directories:'
+    Get-ChildItem $appBase -Directory -Recurse -Force |
+        Where-Object { $_.Name -eq 'runtime' } |
+        Select-Object -ExpandProperty FullName
+
+    Write-Host '4. App root files:'
+    Get-ChildItem $appBase -Force |
+        Select-Object Name, FullName
+
+    throw 'Diagnostic complete. Please check EXE and JAVA paths above.'
 }
 
 & $javaExe -version
