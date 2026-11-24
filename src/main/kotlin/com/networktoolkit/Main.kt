@@ -1,8 +1,12 @@
 package com.networktoolkit
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -67,8 +71,7 @@ private fun ToolkitApp() {
         "Tracert",
         "ARP 扫描",
         "DNS 查询",
-        "TCP 测试",
-        "UDP 测试",
+        "TCP/UDP 测试",
         "TCP/UDP 服务端",
         "路由表",
         "IPv4 子网",
@@ -83,6 +86,7 @@ private fun ToolkitApp() {
                 .width(218.dp)
                 .fillMaxHeight()
                 .background(Color(0xFF0B2036))
+                .verticalScroll(rememberScrollState())
                 .padding(14.dp)
         ) {
             Text("NETWORK", color = Accent)
@@ -111,7 +115,7 @@ private fun ToolkitApp() {
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(18.dp))
 
             Text(
                 "Windows x64 · v$APP_VERSION",
@@ -127,6 +131,7 @@ private fun ToolkitApp() {
         Column(
             Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(22.dp)
         ) {
             Text(
@@ -174,8 +179,7 @@ private fun ToolkitApp() {
 
                     "ARP 扫描" -> ArpPage()
                     "DNS 查询" -> DnsPage()
-                    "TCP 测试" -> TcpPage()
-                    "UDP 测试" -> UdpPage()
+                    "TCP/UDP 测试" -> TcpUdpPage()
                     "TCP/UDP 服务端" -> LocalServerPage()
                     "路由表" -> OutputPage("读取 Windows 路由表", "route print")
                     "IPv4 子网" -> SubnetPage()
@@ -270,13 +274,13 @@ private data class IpProfile(
 private fun AdapterPage() {
     var adapters by remember { mutableStateOf<List<AdapterItem>>(emptyList()) }
     var selected by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
 
-    var output by remember { mutableStateOf("正在读取本机网卡……") }
     var ip by remember { mutableStateOf("") }
     var mask by remember { mutableStateOf("255.255.255.0") }
     var gateway by remember { mutableStateOf("") }
     var dns by remember { mutableStateOf("") }
-
     var profileName by remember { mutableStateOf("") }
     var profiles by remember { mutableStateOf(ProfileStore.load()) }
 
@@ -284,235 +288,156 @@ private fun AdapterPage() {
 
     fun refreshAdapters() {
         scope.launch {
-            output = "正在读取网卡……"
+            loading = true
             val names = getAdapterNames()
-
             adapters = names.map { AdapterItem(it) }
-
-            if (selected !in names) {
-                selected = names.firstOrNull().orEmpty()
-            }
-
-            output = if (selected.isNotBlank()) {
-                getAdapterInfo(selected)
-            } else {
-                "没有读取到网卡。请检查 Windows 网络适配器。"
-            }
+            if (selected !in names) selected = names.firstOrNull().orEmpty()
+            loading = false
+            notice = if (names.isEmpty()) "没有发现网络适配器，请检查 Windows 网络设置。" else "已发现 ${names.size} 个网络适配器。"
         }
     }
 
-    LaunchedEffect(Unit) {
-        refreshAdapters()
-    }
+    LaunchedEffect(Unit) { refreshAdapters() }
 
     Row(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Column(
-            Modifier
-                .weight(1.45f)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            Modifier.weight(1.15f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("自动识别本机网卡", color = Accent)
-
             Row(verticalAlignment = Alignment.CenterVertically) {
-                var expanded by remember { mutableStateOf(false) }
+                Column(Modifier.weight(1f)) {
+                    Text("选择网络适配器", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    Text("点击网卡卡片进行选择", color = Light)
+                }
+                OutlinedButton(onClick = { refreshAdapters() }, enabled = !loading) {
+                    Text(if (loading) "刷新中…" else "刷新网卡")
+                }
+            }
 
-                Box(Modifier.weight(1f)) {
-                    OutlinedButton(
-                        onClick = { expanded = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            selected.ifBlank { "请选择网卡" },
-                            color = Color.White
-                        )
-                    }
-
-                    DropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        adapters.forEach { adapter ->
-                            DropdownMenuItem(
-                                text = { Text(adapter.name) },
-                                onClick = {
-                                    selected = adapter.name
-                                    expanded = false
-                                    scope.launch {
-                                        output = getAdapterInfo(selected)
-                                    }
-                                }
+            if (adapters.isEmpty()) {
+                InfoCard("未发现网卡", "请检查设备的网络适配器是否已启用，然后点击刷新网卡。")
+            } else {
+                adapters.forEach { adapter ->
+                    val isSelected = selected == adapter.name
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) Accent else Color(0xFF34516C),
+                                shape = RoundedCornerShape(14.dp)
                             )
+                            .clickable {
+                                selected = adapter.name
+                                notice = "已选择：${adapter.name}"
+                            },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) Color(0xFF214D73) else Panel
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier.size(42.dp)
+                                    .background(if (isSelected) Accent else Color(0xFF294967), RoundedCornerShape(12.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("网", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(adapter.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                                Text(if (isSelected) "当前已选择" else "点击选择此网络适配器", color = Light)
+                            }
+                            if (isSelected) {
+                                Text("✓ 已选", color = Color(0xFF8BE0B0), style = MaterialTheme.typography.labelLarge)
+                            }
                         }
                     }
                 }
-
-                Spacer(Modifier.width(8.dp))
-
-                Button(onClick = { refreshAdapters() }) {
-                    Text("刷新")
-                }
             }
-
-            Button(
-                onClick = {
-                    if (selected.isNotBlank()) {
-                        scope.launch {
-                            output = getAdapterInfo(selected)
-                        }
-                    }
-                }
-            ) {
-                Text("读取所选网卡信息")
-            }
-
-            OutputBox(output)
 
             Divider(color = Accent)
-
-            Text(
-                "静态 IPv4 配置",
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge
-            )
-
+            Text("静态 IPv4 配置", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text("当前网卡：${selected.ifBlank { "尚未选择" }}", color = Accent)
             Field("IPv4 地址", ip) { ip = it }
             Field("子网掩码", mask) { mask = it }
             Field("默认网关（可留空）", gateway) { gateway = it }
             Field("首选 DNS（可留空）", dns) { dns = it }
 
             Button(
+                enabled = selected.isNotBlank(),
                 onClick = {
                     scope.launch {
-                        if (selected.isBlank()) {
-                            output = "请先选择网卡。"
-                        } else {
-                            output = applyStaticIp(
-                                selected,
-                                ip,
-                                mask,
-                                gateway,
-                                dns
-                            )
-                        }
+                        val result = applyStaticIp(selected, ip, mask, gateway, dns)
+                        notice = if (result.startsWith("配置失败")) result.lineSequence().first()
+                        else "配置请求已提交。请确认 Windows 管理员权限提示，并刷新网卡验证。"
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("应用静态 IP（需要管理员权限）")
-            }
+            ) { Text("应用静态 IP（需要管理员权限）") }
 
-            Text(
-                "提示：修改 IP 前请确认配置正确。错误的 IP 或网关可能导致网络中断。",
-                color = Color(0xFFFFC56B)
-            )
+            Text("提示：修改 IP 前请确认配置正确。错误的 IP 或网关可能导致网络中断。", color = Color(0xFFFFC56B))
         }
 
         Column(
-            Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState()),
+            Modifier.weight(0.85f),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                "保存的配置方案",
-                color = Accent,
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            Field("方案名称", profileName) {
-                profileName = it
-            }
-
+            Text("保存的配置方案", color = Accent, style = MaterialTheme.typography.titleLarge)
+            Field("方案名称", profileName) { profileName = it }
             Button(
                 onClick = {
-                    if (
-                        profileName.isNotBlank() &&
-                        selected.isNotBlank() &&
-                        validIpv4(ip) &&
-                        validMask(mask)
-                    ) {
-                        val profile = IpProfile(
-                            profileName,
-                            selected,
-                            ip,
-                            mask,
-                            gateway,
-                            dns
-                        )
-
+                    if (profileName.isNotBlank() && selected.isNotBlank() && validIpv4(ip) && validMask(mask)) {
+                        val profile = IpProfile(profileName, selected, ip, mask, gateway, dns)
                         profiles = profiles + profile
                         ProfileStore.save(profiles)
-                        output = "配置方案已保存：${profile.name}"
-                    } else {
-                        output = "请填写方案名称、有效 IP 和子网掩码。"
-                    }
+                        notice = "配置方案已保存：${profile.name}"
+                        profileName = ""
+                    } else notice = "请填写方案名称、有效 IP 和子网掩码。"
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("保存当前配置")
-            }
+            ) { Text("保存当前配置") }
 
             profiles.forEachIndexed { index, profile ->
                 Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = Panel
-                    ),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = CardDefaults.cardColors(containerColor = Panel),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(
-                        Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(profile.name, color = Color.White)
-                        Text(
-                            "${profile.alias}\n${profile.ip} / ${profile.mask}",
-                            color = Light
-                        )
-
-                        Row {
-                            Button(
-                                onClick = {
-                                    selected = profile.alias
-                                    ip = profile.ip
-                                    mask = profile.mask
-                                    gateway = profile.gateway
-                                    dns = profile.dns
-                                    scope.launch {
-                                        output = applyStaticIp(
-                                            profile.alias,
-                                            profile.ip,
-                                            profile.mask,
-                                            profile.gateway,
-                                            profile.dns
-                                        )
-                                    }
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(profile.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                        Text("${profile.alias}\n${profile.ip} / ${profile.mask}", color = Light)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                selected = profile.alias
+                                ip = profile.ip
+                                mask = profile.mask
+                                gateway = profile.gateway
+                                dns = profile.dns
+                                scope.launch {
+                                    val result = applyStaticIp(profile.alias, profile.ip, profile.mask, profile.gateway, profile.dns)
+                                    notice = if (result.startsWith("配置失败")) result.lineSequence().first()
+                                    else "已提交配置方案，请确认管理员权限提示。"
                                 }
-                            ) {
-                                Text("一键应用")
-                            }
-
-                            Spacer(Modifier.width(8.dp))
-
-                            OutlinedButton(
-                                onClick = {
-                                    profiles = profiles.toMutableList().also {
-                                        it.removeAt(index)
-                                    }
-                                    ProfileStore.save(profiles)
-                                    output = "已删除配置方案。"
-                                }
-                            ) {
-                                Text("删除")
-                            }
+                            }) { Text("一键应用") }
+                            OutlinedButton(onClick = {
+                                profiles = profiles.toMutableList().also { it.removeAt(index) }
+                                ProfileStore.save(profiles)
+                                notice = "已删除配置方案。"
+                            }) { Text("删除") }
                         }
                     }
                 }
+            }
+            if (notice.isNotBlank()) {
+                Text(notice, color = if (notice.contains("失败") || notice.contains("请填写")) Color(0xFFFFC56B) else Color(0xFF8BE0B0))
             }
         }
     }
@@ -839,119 +764,117 @@ private fun DnsPage() {
 }
 
 /* =========================
-   TCP 连接测试
+   TCP / UDP 测试（左右分栏）
    ========================= */
 
 @Composable
-private fun TcpPage() {
+private fun TcpUdpPage() {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        TcpTestPanel()
+        UdpTestPanel()
+    }
+}
+
+@Composable
+private fun TcpTestPanel() {
     var host by remember { mutableStateOf("192.168.1.1") }
     var port by remember { mutableStateOf("80") }
-    var output by remember { mutableStateOf("") }
+    var output by remember { mutableStateOf("填写目标地址和端口后开始测试。") }
     var testing by remember { mutableStateOf(false) }
-
     val scope = rememberCoroutineScope()
 
-    Field("目标 IP / 域名", host) { host = it }
-    Field("TCP 端口", port) { port = it }
-
-    Button(
-        enabled = !testing,
-        onClick = {
-            scope.launch {
-                val p = port.toIntOrNull()
-
-                if (!validHost(host) || p == null || p !in 1..65535) {
-                    output = "主机地址或端口格式无效。"
-                } else {
-                    testing = true
-                    output = tcpConnectTest(host, p)
-                    testing = false
-                }
-            }
-        }
+    Card(
+        modifier = Modifier.width(390.dp),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(16.dp)
     ) {
-        Text(if (testing) "正在连接……" else "立即测试 TCP")
-    }
-
-    OutputBox(output)
-}
-
-private suspend fun tcpConnectTest(
-    host: String,
-    port: Int
-): String = withContext(Dispatchers.IO) {
-    val start = System.nanoTime()
-
-    try {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(host, port), 1500)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("TCP 测试", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text("检测目标 TCP 端口是否能够建立连接", color = Light)
+            Field("目标 IP / 域名", host) { host = it }
+            Field("TCP 端口", port) { port = it }
+            Button(
+                enabled = !testing,
+                onClick = {
+                    scope.launch {
+                        val p = port.toIntOrNull()
+                        if (!validHost(host) || p == null || p !in 1..65535) {
+                            output = "主机地址或端口格式无效。"
+                        } else {
+                            testing = true
+                            output = tcpConnectTest(host, p)
+                            testing = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (testing) "正在连接…" else "测试 TCP") }
+            OutputBox(output)
         }
-
-        val ms = (System.nanoTime() - start) / 1_000_000
-
-        "TCP 连接成功\n目标：$host:$port\n耗时：${ms} ms"
-    } catch (e: Exception) {
-        val ms = (System.nanoTime() - start) / 1_000_000
-
-        "TCP 连接失败\n目标：$host:$port\n耗时：${ms} ms\n原因：${e.message}"
     }
 }
-
-/* =========================
-   UDP 探测
-   ========================= */
 
 @Composable
-private fun UdpPage() {
+private fun UdpTestPanel() {
     var host by remember { mutableStateOf("127.0.0.1") }
     var port by remember { mutableStateOf("53") }
-    var output by remember {
-        mutableStateOf("UDP 没有通用握手，发送成功不代表远端服务可用。")
-    }
-
+    var output by remember { mutableStateOf("UDP 不建立 TCP 式连接；发送成功不代表远端端口开放。") }
+    var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Field("目标主机", host) { host = it }
-    Field("UDP 端口", port) { port = it }
-
-    Button(
-        onClick = {
-            scope.launch {
-                val p = port.toIntOrNull() ?: 0
-                output = if (validHost(host)) {
-                    udpProbe(host, p)
-                } else {
-                    "目标主机格式无效。"
-                }
-            }
-        }
+    Card(
+        modifier = Modifier.width(390.dp),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        shape = RoundedCornerShape(16.dp)
     ) {
-        Text("发送 UDP 探测数据")
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("UDP 测试", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Text("向目标 UDP 端口发送探测数据报", color = Light)
+            Field("目标 IP / 域名", host) { host = it }
+            Field("UDP 端口", port) { port = it }
+            Button(
+                enabled = !testing,
+                onClick = {
+                    scope.launch {
+                        val p = port.toIntOrNull() ?: 0
+                        testing = true
+                        output = if (validHost(host)) udpProbe(host, p) else "目标主机格式无效。"
+                        testing = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (testing) "正在发送…" else "发送 UDP 探测") }
+            OutputBox(output)
+        }
     }
-
-    OutputBox(output)
 }
+
+private suspend fun tcpConnectTest(host: String, port: Int): String =
+    withContext(Dispatchers.IO) {
+        val start = System.nanoTime()
+        try {
+            Socket().use { socket -> socket.connect(InetSocketAddress(host, port), 1500) }
+            val ms = (System.nanoTime() - start) / 1_000_000
+            "TCP 连接成功\n目标：$host:$port\n耗时：${ms} ms"
+        } catch (e: Exception) {
+            val ms = (System.nanoTime() - start) / 1_000_000
+            "TCP 连接失败\n目标：$host:$port\n耗时：${ms} ms\n原因：${e.message}"
+        }
+    }
 
 private suspend fun udpProbe(host: String, port: Int): String =
     withContext(Dispatchers.IO) {
-        if (port !in 1..65535) {
-            return@withContext "端口范围必须是 1-65535。"
-        }
-
+        if (port !in 1..65535) return@withContext "端口范围必须是 1-65535。"
         try {
             DatagramSocket().use { socket ->
                 val data = "NetworkToolkit UDP probe".toByteArray()
-                val packet = DatagramPacket(
-                    data,
-                    data.size,
-                    InetAddress.getByName(host),
-                    port
-                )
+                val packet = DatagramPacket(data, data.size, InetAddress.getByName(host), port)
                 socket.send(packet)
             }
-
-            "UDP 数据报已发送至 $host:$port。\n" +
-                "注意：UDP 不建立 TCP 式连接，发送成功不能证明远端端口开放。"
+            "UDP 数据报已发送至 $host:$port。\n注意：UDP 无连接，发送成功不能证明远端端口开放。"
         } catch (e: Exception) {
             "UDP 探测失败：${e.message}"
         }
@@ -965,196 +888,173 @@ private suspend fun udpProbe(host: String, port: Int): String =
 private fun LocalServerPage() {
     var protocol by remember { mutableStateOf("TCP") }
     var portText by remember { mutableStateOf("5566") }
-
     var status by remember { mutableStateOf("未启动") }
-    var output by remember {
-        mutableStateOf("输入端口并启动服务端。")
-    }
-
+    var output by remember { mutableStateOf("输入端口并启动服务端。") }
     var tcpServer by remember { mutableStateOf<ServerSocket?>(null) }
     var udpServer by remember { mutableStateOf<DatagramSocket?>(null) }
     var serverJob by remember { mutableStateOf<Job?>(null) }
-
+    val tcpClientStates = remember { mutableStateMapOf<String, String>() }
+    val udpClientLastSeen = remember { mutableStateMapOf<String, Long>() }
+    val clientSockets = remember { mutableSetOf<Socket>() }
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            nowMs = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
     fun stopServer() {
-        try {
-            tcpServer?.close()
-        } catch (_: Exception) {
-        }
-
-        try {
-            udpServer?.close()
-        } catch (_: Exception) {
-        }
-
+        try { tcpServer?.close() } catch (_: Exception) { }
+        try { udpServer?.close() } catch (_: Exception) { }
+        tcpClientStates.keys.toList().forEach { tcpClientStates[it] = "断开连接" }
+        clientSockets.toList().forEach { try { it.close() } catch (_: Exception) { } }
+        clientSockets.clear()
         serverJob?.cancel()
-
         tcpServer = null
         udpServer = null
         serverJob = null
-
         status = "已停止"
         output += "\n服务端已停止。"
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            try {
-                tcpServer?.close()
-                udpServer?.close()
-                serverJob?.cancel()
-            } catch (_: Exception) {
-            }
+            try { tcpServer?.close() } catch (_: Exception) { }
+            try { udpServer?.close() } catch (_: Exception) { }
+            clientSockets.toList().forEach { try { it.close() } catch (_: Exception) { } }
+            serverJob?.cancel()
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            "本机 TCP / UDP 模拟服务端",
-            color = Accent,
-            style = MaterialTheme.typography.titleLarge
-        )
-
-        Field("监听端口", portText) { portText = it }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(
-                selected = protocol == "TCP",
-                onClick = { protocol = "TCP" },
-                label = { Text("TCP") }
-            )
-
-            FilterChip(
-                selected = protocol == "UDP",
-                onClick = { protocol = "UDP" },
-                label = { Text("UDP") }
-            )
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("TCP / UDP 服务端", color = Accent, style = MaterialTheme.typography.titleLarge)
+        Text("监听本机所有 IPv4 网卡，其他设备可通过本机局域网 IP 和端口连接。", color = Light)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FilterChip(selected = protocol == "TCP", onClick = { protocol = "TCP" }, enabled = status != "运行中" && status != "启动中", label = { Text("TCP 服务端") })
+            FilterChip(selected = protocol == "UDP", onClick = { protocol = "UDP" }, enabled = status != "运行中" && status != "启动中", label = { Text("UDP 服务端") })
+            Spacer(Modifier.width(8.dp))
+            Text("监听端口", color = Light)
+            Box(Modifier.width(150.dp)) { Field("端口", portText) { portText = it.filter(Char::isDigit).take(5) } }
         }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
-                enabled = status != "运行中",
+                enabled = status != "运行中" && status != "启动中",
                 onClick = {
                     val listenPort = portText.toIntOrNull()
-
                     if (listenPort == null || listenPort !in 1..65535) {
                         output = "端口必须在 1-65535 之间。"
                     } else {
+                        status = "启动中"
+                        tcpClientStates.clear()
+                        udpClientLastSeen.clear()
                         serverJob = scope.launch(Dispatchers.IO) {
                             try {
                                 if (protocol == "TCP") {
                                     val server = ServerSocket()
                                     server.reuseAddress = true
-                                    server.bind(
-                                        InetSocketAddress("0.0.0.0", listenPort)
-                                    )
-
+                                    server.bind(InetSocketAddress("0.0.0.0", listenPort))
                                     withContext(Dispatchers.Main) {
                                         tcpServer = server
                                         status = "运行中"
-                                        output = "TCP 服务端启动成功。\n监听地址：0.0.0.0:$listenPort"
+                                        output = "TCP 服务端已启动，监听 0.0.0.0:$listenPort"
                                     }
-
                                     while (isActive) {
                                         val client = server.accept()
-
+                                        val peer = "${client.inetAddress.hostAddress}:${client.port}"
+                                        withContext(Dispatchers.Main) {
+                                            clientSockets.add(client)
+                                            tcpClientStates[peer] = "已连接"
+                                            output = (output + "\n$peer [已连接]").takeLast(6000)
+                                        }
                                         launch(Dispatchers.IO) {
-                                            client.use { s ->
-                                                s.soTimeout = 1500
-
-                                                val peer = s.inetAddress.hostAddress
-                                                val data = try {
-                                                    val buffer = ByteArray(1024)
-                                                    val length = s.getInputStream()
-                                                        .read(buffer)
-                                                    if (length > 0) {
-                                                        String(buffer, 0, length, Charsets.UTF_8)
-                                                    } else {
-                                                        "(客户端未发送数据)"
+                                            try {
+                                                client.use { socket ->
+                                                    val input = socket.getInputStream()
+                                                    val buffer = ByteArray(2048)
+                                                    while (isActive) {
+                                                        val length = input.read(buffer)
+                                                        if (length < 0) break
+                                                        if (length > 0) {
+                                                            val received = String(buffer, 0, length, Charsets.UTF_8)
+                                                            withContext(Dispatchers.Main) {
+                                                                output = (output + "\n[$peer] $received").takeLast(6000)
+                                                            }
+                                                        }
                                                     }
-                                                } catch (_: Exception) {
-                                                    "(客户端已连接，未读取到数据)"
                                                 }
-
+                                            } catch (_: Exception) {
+                                            } finally {
                                                 withContext(Dispatchers.Main) {
-                                                    output += "\n\nTCP 客户端：$peer"
-                                                    output += "\n收到数据：$data"
+                                                    clientSockets.remove(client)
+                                                    tcpClientStates[peer] = "断开连接"
+                                                    output = (output + "\n$peer [断开连接]").takeLast(6000)
                                                 }
                                             }
                                         }
                                     }
                                 } else {
-                                    val server = DatagramSocket(
-                                        InetSocketAddress("0.0.0.0", listenPort)
-                                    )
-
+                                    val server = DatagramSocket(InetSocketAddress("0.0.0.0", listenPort))
                                     withContext(Dispatchers.Main) {
                                         udpServer = server
                                         status = "运行中"
-                                        output = "UDP 服务端启动成功。\n监听地址：0.0.0.0:$listenPort"
+                                        output = "UDP 服务端已启动，监听 0.0.0.0:$listenPort"
                                     }
-
                                     while (isActive) {
                                         val buffer = ByteArray(4096)
-                                        val packet = DatagramPacket(
-                                            buffer,
-                                            buffer.size
-                                        )
-
+                                        val packet = DatagramPacket(buffer, buffer.size)
                                         server.receive(packet)
-
-                                        val source = "${packet.address.hostAddress}:${packet.port}"
-                                        val data = String(
-                                            packet.data,
-                                            packet.offset,
-                                            packet.length,
-                                            Charsets.UTF_8
-                                        )
-
+                                        val peer = "${packet.address.hostAddress}:${packet.port}"
+                                        val data = String(packet.data, packet.offset, packet.length, Charsets.UTF_8)
                                         withContext(Dispatchers.Main) {
-                                            output += "\n\nUDP 来源：$source"
-                                            output += "\n收到数据：$data"
+                                            udpClientLastSeen[peer] = System.currentTimeMillis()
+                                            output = (output + "\n$peer [收到 UDP 数据]：$data").takeLast(6000)
                                         }
                                     }
                                 }
                             } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
-                                    status = "已停止"
-                                    output += "\n服务端异常：${e.message}"
+                                    if (status == "运行中" || status == "启动中") {
+                                        status = "已停止"
+                                        output = (output + "\n服务端异常：${e.message}").takeLast(6000)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            ) {
-                Text("启动服务端")
-            }
-
-            Button(
-                onClick = { stopServer() },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF9B3434)
-                )
-            ) {
-                Text("停止服务端")
-            }
+            ) { Text("启动服务端") }
+            Button(onClick = { stopServer() }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9B3434))) { Text("停止服务端") }
+            Text("当前状态：$status", color = if (status == "运行中") Color(0xFF8BE0B0) else Light)
         }
 
-        Text("当前状态：$status", color = Color(0xFF7FE0A7))
-
-        Text(
-            "监听地址为 0.0.0.0，表示监听本机所有 IPv4 网卡。\n" +
-                "TCP 会记录连接来源和接收的数据；UDP 会记录数据报来源和内容。\n" +
-                "请勿在不可信网络中开放不必要的监听端口。",
-            color = Light
-        )
-
+        Card(colors = CardDefaults.cardColors(containerColor = Panel), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (protocol == "TCP") "TCP 客户端连接状态" else "UDP 来源活动状态", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                if (protocol == "TCP") {
+                    if (tcpClientStates.isEmpty()) Text("暂无客户端连接", color = Light)
+                    tcpClientStates.entries.toList().reversed().forEach { (peer, state) ->
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(peer, color = Light, modifier = Modifier.weight(1f))
+                            Text("[$state]", color = if (state == "已连接") Color(0xFF8BE0B0) else Color(0xFFFFC56B))
+                        }
+                    }
+                } else {
+                    if (udpClientLastSeen.isEmpty()) Text("尚未收到 UDP 数据报", color = Light)
+                    udpClientLastSeen.entries.toList().reversed().forEach { (peer, lastSeen) ->
+                        val active = nowMs - lastSeen < 15000
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(peer, color = Light, modifier = Modifier.weight(1f))
+                            Text(if (active) "[已连接*]" else "[断开连接*]", color = if (active) Color(0xFF8BE0B0) else Color(0xFFFFC56B))
+                        }
+                    }
+                    Text("* UDP 本身无连接机制：此处以最近 15 秒是否收到该 IP:端口的数据作为活动状态。", color = Color(0xFFFFC56B))
+                }
+            }
+        }
+        Text("TCP：客户端连接后持续显示 IP:端口，断开时更新为 [断开连接]。UDP：收到数据报后记录来源；由于 UDP 无连接，使用 15 秒活动超时显示状态。", color = Light)
         OutputBox(output)
     }
 }
@@ -1168,19 +1068,74 @@ private fun SubnetPage() {
     var ip by remember { mutableStateOf("192.168.1.10") }
     var cidr by remember { mutableStateOf("24") }
     var output by remember { mutableStateOf("") }
+    var baseIp by remember { mutableStateOf("192.168.1.0") }
+    var basePrefix by remember { mutableStateOf("24") }
+    var hostRequirements by remember { mutableStateOf("100\n50\n20\n10") }
+    var vlsmOutput by remember { mutableStateOf("") }
 
-    Field("IPv4 地址", ip) { ip = it }
-    Field("前缀长度（0-32）", cidr) { cidr = it }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("普通 IPv4 子网计算", color = Accent, style = MaterialTheme.typography.titleLarge)
+        Field("IPv4 地址", ip) { ip = it }
+        Field("前缀长度（0-32）", cidr) { cidr = it }
+        Button(onClick = { output = subnetInfo(ip, cidr.toIntOrNull() ?: -1) }) { Text("计算子网") }
+        if (output.isNotBlank()) OutputBox(output)
 
-    Button(
-        onClick = {
-            output = subnetInfo(ip, cidr.toIntOrNull() ?: -1)
-        }
-    ) {
-        Text("计算")
+        Divider(color = Accent)
+        Text("可变长子网掩码（VLSM）规划", color = Accent, style = MaterialTheme.typography.titleLarge)
+        Text("输入一个母网段，再按行填写每个子网需要的主机数量。系统会按需求从大到小分配不同长度的掩码，并计算可分配的网络号。", color = Light)
+        Field("母网段 IPv4 地址", baseIp) { baseIp = it }
+        Field("母网段前缀长度（例如 24）", basePrefix) { basePrefix = it }
+        OutlinedTextField(
+            value = hostRequirements,
+            onValueChange = { hostRequirements = it },
+            label = { Text("各子网所需主机数（每行一个）") },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
+            minLines = 4
+        )
+        Button(onClick = {
+            vlsmOutput = calculateVlsm(baseIp, basePrefix.toIntOrNull() ?: -1, hostRequirements)
+        }) { Text("计算 VLSM 网络号") }
+        if (vlsmOutput.isNotBlank()) OutputBox(vlsmOutput)
     }
+}
 
-    OutputBox(output)
+private fun calculateVlsm(baseIp: String, basePrefix: Int, requirementsText: String): String {
+    if (!validIpv4(baseIp) || basePrefix !in 0..30) return "母网段地址或前缀长度无效（母网段支持 /0 至 /30）。"
+    val requirements = requirementsText.lines().map { it.trim() }.filter { it.isNotEmpty() }.map {
+        it.toIntOrNull() ?: return "主机数量必须是正整数。"
+    }
+    if (requirements.isEmpty() || requirements.any { it < 1 }) return "请至少填写一个大于 0 的主机数量。"
+
+    val baseMask = if (basePrefix == 0) 0L else (0xFFFFFFFFL shl (32 - basePrefix)) and 0xFFFFFFFFL
+    val baseNetwork = ipv4ToLong(baseIp) and baseMask
+    val baseBroadcast = baseNetwork or (baseMask xor 0xFFFFFFFFL)
+    var cursor = baseNetwork
+    val allocations = mutableListOf<String>()
+
+    requirements.sortedDescending().forEachIndexed { index, hosts ->
+        var hostBits = 2
+        while (hostBits < 32 && ((1L shl hostBits) - 2) < hosts) hostBits++
+        if (hostBits >= 31) return "主机数量 $hosts 超出可规划范围。"
+        val prefix = 32 - hostBits
+        val blockSize = 1L shl hostBits
+        val network = ((cursor + blockSize - 1) / blockSize) * blockSize
+        val broadcast = network + blockSize - 1
+        if (broadcast > baseBroadcast) {
+            return "地址空间不足：第 ${index + 1} 个子网需要 $hosts 台主机，但母网段 ${longToIpv4(baseNetwork)}/$basePrefix 剩余地址不够。"
+        }
+        val mask = (0xFFFFFFFFL shl hostBits) and 0xFFFFFFFFL
+        val usable = blockSize - 2
+        allocations += buildString {
+            appendLine("子网 ${index + 1}（需求：$hosts 台主机）")
+            appendLine("网络号：${longToIpv4(network)}/$prefix")
+            appendLine("子网掩码：${longToIpv4(mask)}")
+            appendLine("可用地址：${longToIpv4(network + 1)} - ${longToIpv4(broadcast - 1)}")
+            appendLine("广播地址：${longToIpv4(broadcast)}")
+            append("可用主机数：$usable")
+        }
+        cursor = broadcast + 1
+    }
+    return "母网段：${longToIpv4(baseNetwork)}/$basePrefix\n成功划分网络号：${allocations.size} 个\n\n" + allocations.joinToString("\n\n")
 }
 
 private fun subnetInfo(ip: String, prefix: Int): String {

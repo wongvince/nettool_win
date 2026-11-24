@@ -4,13 +4,22 @@
 
 ## 首版功能
 
-- 网卡信息读取；静态 IPv4 / 掩码 / 可选网关 / DNS 配置；本机配置方案保存和一键应用
+- 网络适配器卡片式选择；静态 IPv4 / 掩码 / 可选网关 / DNS 配置；本机配置方案保存和一键应用
 - Ping、Tracert、ARP 扫描（/24 逐地址 ICMP 探测后读取 ARP 缓存）
-- DNS 查询、TCP 端口测试、UDP 数据报探测
-- Windows 路由表、IPv4 子网计算
+- DNS 查询、TCP/UDP 合并测试页（左侧 TCP、右侧 UDP）
+- TCP/UDP 服务端：TCP 客户端连接/断开状态及来源 IP:端口显示；UDP 来源活动状态显示
+- Windows 路由表、IPv4 子网计算和 VLSM 可变长子网掩码规划
 - MAC OUI 厂商查询（内置常见 OUI 示例数据，可通过 `src/main/resources/oui.csv` 扩充 IEEE 数据）
 - GitHub Releases 版本检查（填写自己的 Releases API 地址，发现新版后手动打开 Release 下载）
 - Ed25519 离线设备绑定授权验证
+
+## 界面与网络测试交互
+
+- 窗口缩小时，左侧导航和右侧内容区域支持纵向滚动；TCP/UDP 测试左右分栏在窄窗口下可横向滚动。
+- 网络适配器页使用卡片选择网卡，不显示 PowerShell 网卡读取执行结果。
+- VLSM 输入母网段和每个子网的主机数量，按需求从大到小分配掩码，并输出网络号、可用地址范围、广播地址和可用主机数。
+- TCP 服务端持续跟踪每个客户端连接，显示来源 IP:端口及 `[已连接]` / `[断开连接]`。
+- UDP 不存在 TCP 式连接状态；界面以最近 15 秒是否收到该来源的数据报显示活动/超时状态。
 
 ## 构建环境
 
@@ -28,7 +37,7 @@
 也可以执行：
 
 ```powershell
-gradle packageReleaseExe packageReleaseMsi createDistributable
+gradle packageReleaseExe createDistributable
 ```
 
 产物位于 `build/compose/binaries/`。
@@ -36,9 +45,11 @@ gradle packageReleaseExe packageReleaseMsi createDistributable
 ## GitHub Actions 自动构建
 
 1. 将整个目录上传到 GitHub 仓库根目录。
-2. 打开 Actions，运行 `NetworkToolkit Windows x64 Build`。
-3. 构建完成后在该次 workflow 的 Artifacts 下载 Windows x64 构建产物。
-4. 推送 `v1.0.0` 等 tag 可自动创建 GitHub Release。
+2. 打开 Actions，选择 `NetworkToolkit Windows x64 Build`，点击 **Run workflow**。
+3. 构建完成后，在该次运行页面底部 Artifacts 分别下载：
+   - `NetworkToolkit-Windows-Setup`（其中包含 `NetworkToolkit-Setup.exe`）
+   - `NetworkToolkit-Windows-Portable`（其中包含便携版 ZIP）
+4. 当前工作流只上传 Actions Artifacts，不会自动创建或上传 GitHub Release。
 
 ## 离线授权
 
@@ -95,3 +106,13 @@ IP 配置方案和许可证保存在用户目录 `.networktoolkit`。卸载软�
 3. 激活正式用户前，先生成自己的 Ed25519 密钥对、替换客户端公钥并重新构建。
 4. 在 `src/main/resources/oui.csv` 中追加 `六位十六进制OUI,厂商名称`，重新构建即可更新本地厂商库。
 5. 将版本更新页默认 API 地址中的 `OWNER/REPO` 改为自己的 GitHub 仓库路径，再重新构建。
+
+
+## Windows x64 产物说明
+
+GitHub Actions 工作流会生成并上传两个独立 Artifact：
+
+- `NetworkToolkit-Windows-Setup`：下载后文件名为 `NetworkToolkit-Setup.exe`。
+- `NetworkToolkit-Windows-Portable`：下载后解压 ZIP，运行其中的 `NetworkToolkit.exe`（无需安装）。
+
+安装版和便携版均由 Compose Desktop 的 `jpackage` 打包流程生成；便携版会在 app image 中检查 `runtime` 目录，确保包含随应用分发的 Java Runtime。工作流仅生成 Actions Artifacts，不会自动创建 GitHub Release。
