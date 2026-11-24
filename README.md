@@ -119,9 +119,6 @@ GitHub Actions 工作流会生成并上传两个独立 Artifact：
 安装版和便携版均由 Compose Desktop 的 `jpackage` 打包流程生成；便携版会在 app image 中检查 `runtime` 目录，确保包含随应用分发的 Java Runtime。工作流仅生成 Actions Artifacts，不会自动创建 GitHub Release。
 
 
-## 本次启动与布局修复
+### Windows x64 构建说明
 
-- 授权页面不再嵌套第二个纵向滚动容器，避免 Compose 因无限高度约束而崩溃；主内容区域负责滚动。
-- Windows 构建会定位真正包含 `NetworkToolkit.exe` 与 `runtime/bin/java.exe` 的应用镜像。
-- 上传 Artifact 前会执行随包 Java Runtime 的 `java.exe -version` 启动检查；检查失败则停止发布，避免上传缺少或无法启动 JVM 的便携包。
-- 安装版仍由 Compose Desktop / jpackage 生成；便携版从已验证的完整应用镜像打包。
+GitHub Actions 使用 `packageReleaseExe` 与 `createReleaseDistributable` 构建同一套 Release 产物。Compose Desktop 的 Release 应用镜像位于 `build/compose/binaries/main-release/app`；不要将它与 Debug 的 `build/compose/binaries/main/app` 混用。便携 ZIP 会在确认应用目录同时包含 `NetworkToolkit.exe` 和 `runtime/bin/java.exe`、并成功运行随包 Java 后生成。

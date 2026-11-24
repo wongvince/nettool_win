@@ -134,8 +134,7 @@ private fun ToolkitApp() {
 
         Column(
             Modifier
-                .weight(1f)
-                .fillMaxHeight()
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState())
                 .padding(22.dp)
         ) {
@@ -219,11 +218,10 @@ private fun LicensePage(
         }
     }
 
-    // The page is already inside ToolkitApp's vertically scrollable content column.
-    // Do not add a second verticalScroll here: nested scrollables can receive
-    // infinite height constraints and crash Compose during measurement.
     Column(
-        Modifier.fillMaxWidth(),
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         InfoCard(
