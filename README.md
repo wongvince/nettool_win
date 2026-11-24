@@ -117,3 +117,11 @@ GitHub Actions 工作流会生成并上传两个独立 Artifact：
 - `NetworkToolkit-Windows-Portable`：下载后解压 ZIP，运行其中的 `NetworkToolkit.exe`（无需安装）。
 
 安装版和便携版均由 Compose Desktop 的 `jpackage` 打包流程生成；便携版会在 app image 中检查 `runtime` 目录，确保包含随应用分发的 Java Runtime。工作流仅生成 Actions Artifacts，不会自动创建 GitHub Release。
+
+
+## 本次启动与布局修复
+
+- 授权页面不再嵌套第二个纵向滚动容器，避免 Compose 因无限高度约束而崩溃；主内容区域负责滚动。
+- Windows 构建会定位真正包含 `NetworkToolkit.exe` 与 `runtime/bin/java.exe` 的应用镜像。
+- 上传 Artifact 前会执行随包 Java Runtime 的 `java.exe -version` 启动检查；检查失败则停止发布，避免上传缺少或无法启动 JVM 的便携包。
+- 安装版仍由 Compose Desktop / jpackage 生成；便携版从已验证的完整应用镜像打包。
