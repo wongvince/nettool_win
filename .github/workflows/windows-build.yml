@@ -35,24 +35,46 @@ jobs:
           $out = Join-Path $PWD 'artifacts'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-          # Find the generated app image by its actual launcher and bundled JVM,
-          # rather than assuming a hard-coded app-image folder name.
+          # Locate the bundled JVM first. Do not assume the launcher and runtime
+          # are discovered by the same recursive-file filter: jpackage layouts
+          # can differ between Compose plugin versions.
           $appBase = Join-Path $PWD 'build/compose/binaries/main/app'
           if (-not (Test-Path $appBase)) { throw "App-image directory missing: $appBase" }
 
-          $launcher = Get-ChildItem -Path $appBase -Filter 'NetworkToolkit.exe' -File -Recurse |
-            Where-Object { Test-Path (Join-Path $_.Directory.FullName 'runtime/bin/java.exe') } |
-            Select-Object -First 1
-          if (-not $launcher) {
-            Get-ChildItem -Path $appBase -Recurse | Select-Object FullName | Format-Table -AutoSize | Out-String | Write-Host
-            throw 'Self-contained NetworkToolkit.exe with runtime/bin/java.exe was not found.'
+          $javaCandidates = @(Get-ChildItem -Path $appBase -Filter 'java.exe' -File -Recurse |
+            Where-Object { $_.FullName -match '[\\/]runtime[\\/]bin[\\/]java\.exe$' })
+          if ($javaCandidates.Count -eq 0) {
+            Write-Host 'Files produced under app-image directory:'
+            Get-ChildItem -Path $appBase -Recurse -File | Select-Object -ExpandProperty FullName | Write-Host
+            throw 'Bundled runtime/bin/java.exe was not generated. Check Compose Desktop createDistributable output.'
           }
 
-          $appImage = $launcher.Directory.FullName
-          $javaExe = Join-Path $appImage 'runtime/bin/java.exe'
-          if (-not (Test-Path $javaExe)) { throw "Bundled JVM missing: $javaExe" }
+          $appImage = $null
+          $javaExe = $null
+          $launcher = $null
+          foreach ($candidate in $javaCandidates) {
+            # Standard jpackage app-image: <app-image>/runtime/bin/java.exe
+            $candidateRuntime = $candidate.Directory.Parent
+            $candidateImage = $candidateRuntime.Parent
+            $candidateLauncher = Join-Path $candidateImage.FullName 'NetworkToolkit.exe'
+            if (Test-Path $candidateLauncher) {
+              $appImage = $candidateImage.FullName
+              $javaExe = $candidate.FullName
+              $launcher = $candidateLauncher
+              break
+            }
+          }
 
-          # Verify the bundled JVM can actually start before publishing artifacts.
+          if (-not $appImage) {
+            Write-Host 'Found bundled Java candidates:'
+            $javaCandidates | Select-Object -ExpandProperty FullName | Write-Host
+            Write-Host 'Found application launchers:'
+            Get-ChildItem -Path $appBase -Filter 'NetworkToolkit.exe' -File -Recurse |
+              Select-Object -ExpandProperty FullName | Write-Host
+            throw 'Could not pair the bundled Java runtime with NetworkToolkit.exe in one jpackage app-image directory.'
+          }
+
+          # Verify the JVM that will ship with the portable package.
           & $javaExe -version
           if ($LASTEXITCODE -ne 0) { throw 'Bundled Java runtime failed its startup check.' }
 
