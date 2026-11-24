@@ -1,4 +1,3 @@
-
 package com.networktoolkit
 
 import androidx.compose.foundation.background
@@ -524,7 +523,7 @@ private suspend fun getAdapterNames(): List<String> =
         val script = """
             Get-NetAdapter |
             Sort-Object ifIndex |
-            ForEach-Object { $_.Name }
+            ForEach-Object { ${'$'}_.Name }
         """.trimIndent()
 
         runPowerShell(script)
@@ -573,25 +572,25 @@ private suspend fun applyStaticIp(
     val safe = alias.replace("'", "''")
 
     val script = """
-        `$ErrorActionPreference = 'Stop'
-        `$a = '$safe'
+        ${'$'}ErrorActionPreference = 'Stop'
+        ${'$'}a = '$safe'
 
-        Set-NetIPInterface -InterfaceAlias `$a -AddressFamily IPv4 -Dhcp Disabled
+        Set-NetIPInterface -InterfaceAlias ${'$'}a -AddressFamily IPv4 -Dhcp Disabled
 
-        Get-NetIPAddress -InterfaceAlias `$a -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object { `$_.PrefixOrigin -eq 'Manual' } |
-        Remove-NetIPAddress -Confirm:`$false -ErrorAction SilentlyContinue
+        Get-NetIPAddress -InterfaceAlias ${'$'}a -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { ${'$'}_.PrefixOrigin -eq 'Manual' } |
+        Remove-NetIPAddress -Confirm:${'$'}false -ErrorAction SilentlyContinue
 
-        New-NetIPAddress -InterfaceAlias `$a -IPAddress '$ip' -PrefixLength $prefix
+        New-NetIPAddress -InterfaceAlias ${'$'}a -IPAddress '$ip' -PrefixLength $prefix
     """.trimIndent() +
         if (gateway.isNotBlank()) {
-            "\nSet-NetIPInterface -InterfaceAlias `$a -AddressFamily IPv4 -Dhcp Disabled\n" +
-                "Set-NetRoute -InterfaceAlias `$a -DestinationPrefix '0.0.0.0/0' -NextHop '$gateway' -ErrorAction SilentlyContinue"
+            "\nSet-NetIPInterface -InterfaceAlias ${'$'}a -AddressFamily IPv4 -Dhcp Disabled\n" +
+                "Set-NetRoute -InterfaceAlias ${'$'}a -DestinationPrefix '0.0.0.0/0' -NextHop '$gateway' -ErrorAction SilentlyContinue"
         } else {
             ""
         } +
         if (dns.isNotBlank()) {
-            "\nSet-DnsClientServerAddress -InterfaceAlias `$a -ServerAddresses '$dns'"
+            "\nSet-DnsClientServerAddress -InterfaceAlias ${'$'}a -ServerAddresses '$dns'"
         } else {
             ""
         }
@@ -602,15 +601,15 @@ private suspend fun applyStaticIp(
         )
 
         val elevateScript = """
-            `$p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @(
+            ${'$'}p = Start-Process powershell.exe -Verb RunAs -Wait -PassThru -ArgumentList @(
                 '-NoProfile',
                 '-ExecutionPolicy',
                 'Bypass',
                 '-EncodedCommand',
                 '$encoded'
             )
-            if (`$p.ExitCode -ne 0) {
-                exit `$p.ExitCode
+            if (${'$'}p.ExitCode -ne 0) {
+                exit ${'$'}p.ExitCode
             }
         """.trimIndent()
 
@@ -625,6 +624,29 @@ private suspend fun applyStaticIp(
         }
     } catch (e: Exception) {
         "配置失败：${e.message}"
+    }
+}
+
+@Composable
+private fun OutputPage(title: String, command: String) {
+    var output by remember { mutableStateOf("点击按钮读取结果。") }
+    var running by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            enabled = !running,
+            onClick = {
+                scope.launch {
+                    running = true
+                    output = runCommand(command)
+                    running = false
+                }
+            }
+        ) {
+            Text(if (running) "正在读取……" else title)
+        }
+        OutputBox(output)
     }
 }
 
@@ -838,11 +860,11 @@ private fun TcpPage() {
             scope.launch {
                 val p = port.toIntOrNull()
 
-                if (!validHost(host) || p !in 1..65535) {
+                if (!validHost(host) || p == null || p !in 1..65535) {
                     output = "主机地址或端口格式无效。"
                 } else {
                     testing = true
-                    output = tcpConnectTest(host, p!!)
+                    output = tcpConnectTest(host, p)
                     testing = false
                 }
             }
@@ -1019,9 +1041,9 @@ private fun LocalServerPage() {
             Button(
                 enabled = status != "运行中",
                 onClick = {
-                    val port = portText.toIntOrNull()
+                    val listenPort = portText.toIntOrNull()
 
-                    if (port !in 1..65535) {
+                    if (listenPort == null || listenPort !in 1..65535) {
                         output = "端口必须在 1-65535 之间。"
                     } else {
                         serverJob = scope.launch(Dispatchers.IO) {
@@ -1030,13 +1052,13 @@ private fun LocalServerPage() {
                                     val server = ServerSocket()
                                     server.reuseAddress = true
                                     server.bind(
-                                        InetSocketAddress("0.0.0.0", port!!)
+                                        InetSocketAddress("0.0.0.0", listenPort)
                                     )
 
                                     withContext(Dispatchers.Main) {
                                         tcpServer = server
                                         status = "运行中"
-                                        output = "TCP 服务端启动成功。\n监听地址：0.0.0.0:$port"
+                                        output = "TCP 服务端启动成功。\n监听地址：0.0.0.0:$listenPort"
                                     }
 
                                     while (isActive) {
@@ -1069,13 +1091,13 @@ private fun LocalServerPage() {
                                     }
                                 } else {
                                     val server = DatagramSocket(
-                                        InetSocketAddress("0.0.0.0", port!!)
+                                        InetSocketAddress("0.0.0.0", listenPort)
                                     )
 
                                     withContext(Dispatchers.Main) {
                                         udpServer = server
                                         status = "运行中"
-                                        output = "UDP 服务端启动成功。\n监听地址：0.0.0.0:$port"
+                                        output = "UDP 服务端启动成功。\n监听地址：0.0.0.0:$listenPort"
                                     }
 
                                     while (isActive) {
@@ -1384,7 +1406,7 @@ private suspend fun runPowerShell(script: String): String =
         try {
             val fullScript = """
                 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-                `$OutputEncoding = New-Object System.Text.UTF8Encoding
+                ${'$'}OutputEncoding = New-Object System.Text.UTF8Encoding
                 $script
             """.trimIndent()
 
