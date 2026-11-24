@@ -57,17 +57,13 @@ fun main() = application {
 
 @Composable
 private fun ToolkitApp() {
-    var activated by remember { mutableStateOf(false) }
-    var tab by remember { mutableStateOf("软件授权") }
+    var activated by remember { mutableStateOf(LicenseManager.isActivated()) }
+    var tab by remember {
+        mutableStateOf(if (activated) "网络适配器" else "软件授权")
+    }
 
     var licenseText by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
-    val appScope = rememberCoroutineScope()
-
-    LaunchedEffect(Unit) {
-        activated = withContext(Dispatchers.IO) { LicenseManager.isActivated() }
-        if (activated) tab = "网络适配器"
-    }
 
     val tabs = listOf(
         "网络适配器",
@@ -157,13 +153,9 @@ private fun ToolkitApp() {
                         { licenseText = it },
                         message,
                         { code ->
-                            appScope.launch {
-                                message = "正在验证授权…"
-                                val result = withContext(Dispatchers.IO) { LicenseManager.activate(code) }
-                                message = result
-                                activated = withContext(Dispatchers.IO) { LicenseManager.isActivated() }
-                                if (activated) tab = "网络适配器"
-                            }
+                            message = LicenseManager.activate(code)
+                            activated = LicenseManager.isActivated()
+                            if (activated) tab = "网络适配器"
                         }
                     )
 
@@ -210,13 +202,7 @@ private fun LicensePage(
     message: String,
     activate: (String) -> Unit
 ) {
-    var device by remember { mutableStateOf("正在读取设备识别码…") }
-    var copyMessage by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        device = withContext(Dispatchers.IO) {
-            runCatching { LicenseManager.deviceId() }.getOrElse { "设备识别码读取失败，请检查 Windows 系统权限。" }
-        }
-    }
+    val device = remember { LicenseManager.deviceId() }
 
     Column(
         Modifier
@@ -237,20 +223,14 @@ private fun LicensePage(
             modifier = Modifier.fillMaxWidth()
         )
 
-        Button(
-            enabled = device.isNotBlank() && !device.startsWith("正在") && !device.contains("失败"),
-            onClick = {
-                copyMessage = runCatching {
-                    java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(
-                        java.awt.datatransfer.StringSelection(device), null
-                    )
-                    "设备识别码已复制。"
-                }.getOrElse { "复制失败：${it.message ?: "系统剪贴板不可用"}" }
-            }
-        ) {
+        Button(onClick = {
+            java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(
+                java.awt.datatransfer.StringSelection(device),
+                null
+            )
+        }) {
             Text("复制设备识别码")
         }
-        if (copyMessage.isNotBlank()) Text(copyMessage, color = Light)
 
         OutlinedTextField(
             code,
@@ -329,8 +309,8 @@ private fun AdapterPage() {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("以太网适配器", color = Color.White, style = MaterialTheme.typography.titleLarge)
-                    Text("仅显示“以太网*”或“Ethernet*”网卡", color = Light)
+                    Text("选择网络适配器", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    Text("点击网卡卡片进行选择", color = Light)
                 }
                 OutlinedButton(onClick = { refreshAdapters() }, enabled = !loading) {
                     Text(if (loading) "刷新中…" else "刷新网卡")
@@ -338,37 +318,40 @@ private fun AdapterPage() {
             }
 
             var adapterMenuExpanded by remember { mutableStateOf(false) }
-            Box(Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { adapterMenuExpanded = true },
-                    enabled = adapters.isNotEmpty() && !loading,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        selected.ifBlank { if (loading) "正在搜索以太网…" else "请选择以太网适配器" },
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text("▾")
-                }
-                DropdownMenu(
-                    expanded = adapterMenuExpanded,
-                    onDismissRequest = { adapterMenuExpanded = false },
-                    modifier = Modifier.background(Panel)
-                ) {
-                    adapters.forEach { adapter ->
-                        DropdownMenuItem(
-                            text = { Text(adapter.name, color = Color.White) },
-                            onClick = {
-                                selected = adapter.name
-                                adapterMenuExpanded = false
-                                notice = "已选择：${adapter.name}"
-                            }
-                        )
+            if (adapters.isEmpty()) {
+                InfoCard("未发现以太网适配器", "仅显示名称以“以太网”或“Ethernet”开头的网卡。请检查网卡是否已启用，然后点击刷新网卡。")
+            } else {
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { adapterMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(selected.ifBlank { "请选择以太网适配器" })
+                            Text("▼")
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = adapterMenuExpanded,
+                        onDismissRequest = { adapterMenuExpanded = false },
+                        modifier = Modifier.fillMaxWidth(0.95f)
+                    ) {
+                        adapters.forEach { adapter ->
+                            DropdownMenuItem(
+                                text = { Text(adapter.name) },
+                                onClick = {
+                                    selected = adapter.name
+                                    adapterMenuExpanded = false
+                                    notice = "已选择：${adapter.name}"
+                                }
+                            )
+                        }
                     }
                 }
-            }
-            if (adapters.isEmpty()) {
-                InfoCard("未发现以太网适配器", "只识别“以太网”“以太网 1”“以太网 2”或“Ethernet”等名称。请检查网卡名称或点击刷新网卡。")
             }
 
             Divider(color = Accent)
@@ -465,8 +448,7 @@ private suspend fun getAdapterNames(): List<String> =
             .filter {
                 it.isNotBlank() &&
                 !it.startsWith("WARNING", true) &&
-                it.startsWith("以太网", ignoreCase = true) ||
-                it.startsWith("Ethernet", ignoreCase = true)
+                (it.startsWith("以太网", true) || it.startsWith("Ethernet", true))
             }
             .distinct()
             .toList()
@@ -1080,103 +1062,82 @@ private fun SubnetPage() {
     var output by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("IPv4 子网划分计算", color = Accent, style = MaterialTheme.typography.titleLarge)
-        Text("输入现有网段和要划分的目标前缀，计算可划分的子网数量及每个子网的地址信息。", color = Light)
+        Text("IPv4 子网划分", color = Accent, style = MaterialTheme.typography.titleLarge)
+        Text(
+            "输入现有网段（例如 192.168.1.1/24），再输入要划分的目标前缀长度（例如 26），系统将计算子网数量及每个子网的地址范围。",
+            color = Light
+        )
         Field("原始 IPv4 网段（例如 192.168.1.1/24）", baseCidr) { baseCidr = it }
-        Field("目标子网前缀位数（例如 26）", targetPrefix) { targetPrefix = it }
-        Button(onClick = {
-            output = calculateFixedSubnets(baseCidr, targetPrefix.toIntOrNull() ?: -1)
-        }) { Text("计算子网") }
+        Field("目标子网前缀长度（例如 26）", targetPrefix) { targetPrefix = it }
+        Button(
+            onClick = {
+                output = calculateSubnetDivision(
+                    baseCidr.trim(),
+                    targetPrefix.toIntOrNull() ?: -1
+                )
+            }
+        ) { Text("计算子网划分") }
         if (output.isNotBlank()) OutputBox(output)
     }
 }
 
-private fun calculateFixedSubnets(baseCidr: String, targetPrefix: Int): String {
-    val parts = baseCidr.trim().split("/")
+private fun calculateSubnetDivision(baseCidr: String, targetPrefix: Int): String {
+    val parts = baseCidr.split("/")
     if (parts.size != 2 || !validIpv4(parts[0])) {
-        return "请输入正确格式的 IPv4 网段，例如 192.168.1.1/24。"
+        return "原始网段格式无效，请按 192.168.1.1/24 的格式输入。"
     }
     val basePrefix = parts[1].toIntOrNull()
-        ?: return "原始网段前缀必须是 0 到 32 之间的整数。"
-    if (basePrefix !in 0..32) return "原始网段前缀必须是 0 到 32。"
-    if (targetPrefix !in basePrefix..32) {
-        return "目标前缀必须大于或等于原始前缀，且不能超过 32。"
+        ?: return "原始网段前缀无效，请输入 0 至 32 之间的整数。"
+    if (basePrefix !in 0..32) return "原始网段前缀必须在 0 至 32 之间。"
+    if (targetPrefix !in 0..32) return "目标前缀必须在 0 至 32 之间。"
+    if (targetPrefix < basePrefix) {
+        return "目标前缀 /$targetPrefix 小于原始前缀 /$basePrefix，不能在该原始网段内这样划分。"
     }
 
-    val baseMask = if (basePrefix == 0) 0L else (0xFFFFFFFFL shl (32 - basePrefix)) and 0xFFFFFFFFL
+    val baseMask = if (basePrefix == 0) 0L
+        else (0xFFFFFFFFL shl (32 - basePrefix)) and 0xFFFFFFFFL
     val baseNetwork = ipv4ToLong(parts[0]) and baseMask
-    val baseBlockSize = 1L shl (32 - basePrefix)
-    val baseBroadcast = baseNetwork + baseBlockSize - 1
+    val baseBroadcast = baseNetwork or (baseMask xor 0xFFFFFFFFL)
     val subnetCount = 1L shl (targetPrefix - basePrefix)
-    val subnetBlockSize = 1L shl (32 - targetPrefix)
-    val targetMask = if (targetPrefix == 0) 0L else (0xFFFFFFFFL shl (32 - targetPrefix)) and 0xFFFFFFFFL
+    val blockSize = 1L shl (32 - targetPrefix)
+    val targetMask = if (targetPrefix == 0) 0L
+        else (0xFFFFFFFFL shl (32 - targetPrefix)) and 0xFFFFFFFFL
     val usableHosts = when {
-        targetPrefix == 32 -> 1L
-        targetPrefix == 31 -> 2L
-        else -> subnetBlockSize - 2
+        targetPrefix >= 31 -> 0L
+        else -> blockSize - 2
     }
-    val maxRows = 1024L
 
-    return buildString {
-        appendLine("原始网段：${longToIpv4(baseNetwork)}/$basePrefix")
-        appendLine("目标前缀：/$targetPrefix")
-        appendLine("可划分子网数量：$subnetCount 个")
-        appendLine("每个子网可用主机数：$usableHosts")
-        appendLine("子网掩码：${longToIpv4(targetMask)}")
-        appendLine("总地址数：$subnetBlockSize")
-        appendLine()
+    val result = StringBuilder()
+    result.appendLine("原始网段：${longToIpv4(baseNetwork)}/$basePrefix")
+    result.appendLine("目标前缀：/$targetPrefix")
+    result.appendLine("子网掩码：${longToIpv4(targetMask)}")
+    result.appendLine("可划分子网数量：$subnetCount 个")
+    result.appendLine("每个子网地址总数：$blockSize 个")
+    result.appendLine("每个子网可用主机数：$usableHosts 个")
+    result.appendLine("原始网段范围：${longToIpv4(baseNetwork)} - ${longToIpv4(baseBroadcast)}")
+    result.appendLine()
 
-        val rowsToShow = minOf(subnetCount, maxRows).toInt()
-        for (index in 0 until rowsToShow) {
-            val network = baseNetwork + index.toLong() * subnetBlockSize
-            val broadcast = network + subnetBlockSize - 1
-            val usableRange = when {
-                targetPrefix == 32 -> "${longToIpv4(network)}（单个地址）"
-                targetPrefix == 31 -> "${longToIpv4(network)} - ${longToIpv4(broadcast)}（点对点 /31）"
-                else -> "${longToIpv4(network + 1)} - ${longToIpv4(broadcast - 1)}"
-            }
-            appendLine("子网 ${index + 1}：")
-            appendLine("网络号：${longToIpv4(network)}/$targetPrefix")
-            appendLine("子网掩码：${longToIpv4(targetMask)}")
-            appendLine("可用地址范围：$usableRange")
-            appendLine("广播地址：${longToIpv4(broadcast)}")
-            appendLine("可用主机数：$usableHosts")
-            if (index != rowsToShow - 1) appendLine()
+    val displayCount = minOf(subnetCount, 512L)
+    for (index in 0 until displayCount) {
+        val network = baseNetwork + index * blockSize
+        val broadcast = network + blockSize - 1
+        result.appendLine("子网 ${index + 1}：${longToIpv4(network)}/$targetPrefix")
+        result.appendLine("网络号：${longToIpv4(network)}")
+        result.appendLine("子网掩码：${longToIpv4(targetMask)}")
+        if (targetPrefix <= 30) {
+            result.appendLine("可用地址范围：${longToIpv4(network + 1)} - ${longToIpv4(broadcast - 1)}")
+        } else {
+            result.appendLine("可用地址范围：无（/31、/32 按点到点或单地址网段处理）")
         }
-        if (subnetCount > maxRows) {
-            appendLine()
-            append("子网数量过多，为避免界面卡顿，仅显示前 $maxRows 个；总数量仍为 $subnetCount 个。")
-        }
+        result.appendLine("广播地址：${longToIpv4(broadcast)}")
+        result.appendLine("可用主机数：$usableHosts")
+        if (index != displayCount - 1) result.appendLine()
     }
-}
-
-private fun subnetInfo(ip: String, prefix: Int): String {
-    if (!validIpv4(ip) || prefix !in 0..32) {
-        return "IPv4 地址或前缀长度无效。"
+    if (subnetCount > displayCount) {
+        result.appendLine()
+        result.appendLine("提示：子网总数为 $subnetCount 个。为避免结果过长，当前仅列出前 $displayCount 个子网。")
     }
-
-    val n = ipv4ToLong(ip)
-    val mask = if (prefix == 0) {
-        0L
-    } else {
-        (0xFFFFFFFFL shl (32 - prefix)) and 0xFFFFFFFFL
-    }
-
-    val network = n and mask
-    val broadcast = network or (mask xor 0xFFFFFFFFL)
-
-    val usable = if (prefix >= 31) 0 else {
-        (1L shl (32 - prefix)) - 2
-    }
-
-    return """
-        网络地址：${longToIpv4(network)}
-        广播地址：${longToIpv4(broadcast)}
-        子网掩码：${longToIpv4(mask)}
-        可用地址数量：$usable
-        首个可用地址：${if (prefix >= 31) "无" else longToIpv4(network + 1)}
-        最后可用地址：${if (prefix >= 31) "无" else longToIpv4(broadcast - 1)}
-    """.trimIndent()
+    return result.toString().trim()
 }
 
 /* =========================
@@ -1572,35 +1533,44 @@ private object LicenseManager {
     )
 
     fun deviceId(): String {
-        fun readCommand(vararg command: String): String = try {
-            val process = ProcessBuilder(*command).redirectErrorStream(true).start()
-            val finished = process.waitFor(6, java.util.concurrent.TimeUnit.SECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-                ""
-            } else {
-                process.inputStream.bufferedReader().use { it.readText().trim() }
-            }
+        val machineGuid = try {
+            val process = ProcessBuilder(
+                "reg.exe",
+                "query",
+                "HKLM\\SOFTWARE\\Microsoft\\Cryptography",
+                "/v",
+                "MachineGuid"
+            ).redirectErrorStream(true).start()
+
+            process.inputStream.bufferedReader().readText()
+                .lines()
+                .lastOrNull { it.contains("MachineGuid") }
+                ?.trim()
+                ?.split(Regex("\\s+"))
+                ?.lastOrNull().orEmpty()
         } catch (_: Exception) {
             ""
         }
 
-        val machineGuidOutput = readCommand(
-            "reg.exe", "query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"
-        )
-        val machineGuid = machineGuidOutput.lines()
-            .lastOrNull { it.contains("MachineGuid") }
-            ?.trim()?.split(Regex("\\s+"))?.lastOrNull().orEmpty()
+        val biosUuid = try {
+            val process = ProcessBuilder(
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_ComputerSystemProduct).UUID"
+            ).redirectErrorStream(true).start()
 
-        val biosUuid = readCommand(
-            "powershell.exe", "-NoProfile", "-Command",
-            "(Get-CimInstance Win32_ComputerSystemProduct).UUID"
-        )
+            process.inputStream.bufferedReader().readText().trim()
+        } catch (_: Exception) {
+            ""
+        }
 
         val raw = listOf(machineGuid, biosUuid)
             .filter { it.isNotBlank() }
             .joinToString("|")
-            .ifBlank { System.getenv("COMPUTERNAME") ?: "UNKNOWN-PC" }
+            .ifBlank {
+                System.getenv("COMPUTERNAME") ?: "UNKNOWN-PC"
+            }
 
         return java.security.MessageDigest
             .getInstance("SHA-256")
@@ -1632,8 +1602,7 @@ private object LicenseManager {
         }
 
     private fun verify(value: String): Boolean {
-        if (value.isBlank() || value.length > 8192) return false
-        val parts = value.trim().split(".")
+        val parts = value.split(".")
         if (parts.size != 2) return false
 
         val payload = String(
