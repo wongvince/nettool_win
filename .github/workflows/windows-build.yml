@@ -1,10 +1,13 @@
-name: NetworkToolkit Windows x64 Build
+name: NetworkToolkit Windows x64 Build and Release
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -27,44 +30,38 @@ jobs:
       - name: Build Windows installer and portable app image
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           gradle packageReleaseExe createDistributable
 
-          $ErrorActionPreference = 'Stop'
           $outputDir = Join-Path $PWD 'artifacts'
           New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
-          # Rename the generated installer to the requested stable filename.
           $installerDir = Join-Path $PWD 'build/compose/binaries/main-release/exe'
           $installer = Get-ChildItem -Path $installerDir -Filter '*.exe' -File |
             Where-Object { $_.Name -notlike '*uninstall*' } |
             Select-Object -First 1
-
-          if (-not $installer) {
-            throw "Windows installer EXE was not found in $installerDir"
-          }
-
+          if (-not $installer) { throw "Windows installer EXE was not found in $installerDir" }
           Copy-Item $installer.FullName (Join-Path $outputDir 'NetworkToolkit-Setup.exe') -Force
 
-          # createDistributable creates a jpackage app image with its own Java runtime.
           $appRoot = Join-Path $PWD 'build/compose/binaries/main/app'
           $appImage = Join-Path $appRoot 'NetworkToolkit'
           if (-not (Test-Path $appImage)) {
-            $candidate = Get-ChildItem -Path $appRoot -Directory -ErrorAction SilentlyContinue |
-              Select-Object -First 1
+            $candidate = Get-ChildItem -Path $appRoot -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($candidate) { $appImage = $candidate.FullName }
           }
-
-          if (-not (Test-Path $appImage)) {
-            throw "Portable app image was not found under $appRoot"
-          }
-
+          if (-not (Test-Path $appImage)) { throw "Portable app image was not found under $appRoot" }
           $runtimeDir = Join-Path $appImage 'runtime'
-          if (-not (Test-Path $runtimeDir)) {
-            throw "Bundled Java runtime was not found in app image: $runtimeDir"
-          }
+          if (-not (Test-Path $runtimeDir)) { throw "Bundled Java runtime was not found in app image: $runtimeDir" }
 
           $portableZip = Join-Path $outputDir 'NetworkToolkit-Windows-x64-Portable.zip'
           Compress-Archive -Path (Join-Path $appImage '*') -DestinationPath $portableZip -CompressionLevel Optimal -Force
+
+          $installerHash = (Get-FileHash (Join-Path $outputDir 'NetworkToolkit-Setup.exe') -Algorithm SHA256).Hash.ToLower()
+          $portableHash = (Get-FileHash $portableZip -Algorithm SHA256).Hash.ToLower()
+          @(
+            "$installerHash  NetworkToolkit-Setup.exe"
+            "$portableHash  NetworkToolkit-Windows-x64-Portable.zip"
+          ) | Set-Content -Path (Join-Path $outputDir 'SHA256SUMS.txt') -Encoding ascii
 
           Write-Host "Installer: $($outputDir)\NetworkToolkit-Setup.exe"
           Write-Host "Portable:  $portableZip"
@@ -82,3 +79,21 @@ jobs:
           name: NetworkToolkit-Windows-Portable
           path: artifacts/NetworkToolkit-Windows-x64-Portable.zip
           if-no-files-found: error
+
+      - name: Upload checksums artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetworkToolkit-SHA256SUMS
+          path: artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: NetworkToolkit ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            artifacts/NetworkToolkit-Setup.exe
+            artifacts/NetworkToolkit-Windows-x64-Portable.zip
+            artifacts/SHA256SUMS.txt
