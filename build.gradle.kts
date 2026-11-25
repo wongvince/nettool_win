@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.networktoolkit"
-version = "1.0.0"
+version = "1.3.0"
 
 kotlin {
     jvmToolchain(17)
@@ -36,7 +36,7 @@ compose.desktop {
             )
 
             packageName = "NetworkToolkit"
-            packageVersion = "1.0.0"
+            packageVersion = "1.3.0"
             description = "Windows Network Engineering Toolbox"
             vendor = "NetworkToolkit"
         }

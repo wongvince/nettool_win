@@ -19,6 +19,8 @@ import androidx.compose.ui.window.application
 import kotlinx.coroutines.*
 import java.io.File
 import java.net.*
+import java.awt.Desktop
+import java.security.MessageDigest
 import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.Signature
@@ -31,9 +33,10 @@ private val Panel = Color(0xFF173B5E)
 private val Accent = Color(0xFF55A9F5)
 private val Light = Color(0xFFEAF2FA)
 
-private const val APP_VERSION = "1.0.0"
+private const val APP_VERSION = "1.3.0"
 private const val DEFAULT_RELEASE_API =
-    "https://api.github.com/repos/OWNER/REPO/releases/latest"
+    "https://api.github.com/repos/wongvince/nettoo1/releases/latest"
+private const val RELEASE_PAGE_URL = "https://github.com/wongvince/nettoo1/releases/latest"
 
 private const val PUBLIC_KEY_B64 =
     "MCowBQYDK2VwAyEABLHkBjACjcxTjOw2P6yQUuTOau4hTVzp6/1NgtH9he4="
@@ -58,8 +61,19 @@ fun main() = application {
 @Composable
 private fun ToolkitApp() {
     var activated by remember { mutableStateOf(LicenseManager.isActivated()) }
+    var trialStatus by remember { mutableStateOf(if (activated) null else TrialManager.evaluate()) }
+    val trialActive = !activated && trialStatus?.active == true
+    val canUseApp = activated || trialActive
     var tab by remember {
-        mutableStateOf(if (activated) "网络适配器" else "软件授权")
+        mutableStateOf(if (canUseApp) "网络适配器" else "软件授权")
+    }
+
+    LaunchedEffect(activated) {
+        while (!activated) {
+            delay(60_000)
+            trialStatus = TrialManager.evaluate()
+            if (trialStatus?.active != true) tab = "软件授权"
+        }
     }
 
     var licenseText by remember { mutableStateOf("") }
@@ -100,7 +114,7 @@ private fun ToolkitApp() {
             Spacer(Modifier.height(22.dp))
 
             tabs.forEach { item ->
-                if (activated || item == "软件授权") {
+                if (canUseApp || item == "软件授权") {
                     NavigationDrawerItem(
                         label = { Text(item) },
                         selected = tab == item,
@@ -122,9 +136,13 @@ private fun ToolkitApp() {
                 color = Color(0xFF9BB5CE)
             )
             Text(
-                if (activated) "授权：已激活" else "授权：未激活",
-                color = if (activated) Color(0xFF7FE0A7)
-                else Color(0xFFFFC56B)
+                when {
+                    activated -> "授权：已激活"
+                    trialActive -> "试用：${formatTrialRemaining(trialStatus!!.remainingMillis)}"
+                    else -> "试用已结束 · 需要授权"
+                },
+                color = if (activated || trialActive) Color(0xFF7FE0A7)
+                else Color(0xFFFF8A80)
             )
         }
 
@@ -141,12 +159,18 @@ private fun ToolkitApp() {
             )
             Spacer(Modifier.height(14.dp))
 
-            if (!activated && tab != "软件授权") {
+            if (!canUseApp && tab != "软件授权") {
                 Text(
-                    "软件尚未激活，请先完成离线设备绑定授权。",
-                    color = Color(0xFFFFC56B)
+                    "24 小时免费试用已结束，请完成离线设备绑定授权后继续使用。",
+                    color = Color(0xFFFF8A80)
                 )
             } else {
+                if (trialActive && tab != "软件授权") {
+                    Text(
+                        "免费试用剩余时间：${formatTrialRemaining(trialStatus!!.remainingMillis)}。试用结束后所有功能将锁定。",
+                        color = Color(0xFFFFC56B)
+                    )
+                }
                 when (tab) {
                     "软件授权" -> LicensePage(
                         licenseText,
@@ -155,7 +179,10 @@ private fun ToolkitApp() {
                         { code ->
                             message = LicenseManager.activate(code)
                             activated = LicenseManager.isActivated()
-                            if (activated) tab = "网络适配器"
+                            if (activated) {
+                                trialStatus = null
+                                tab = "网络适配器"
+                            }
                         }
                     )
 
@@ -261,7 +288,6 @@ private data class AdapterItem(
 
 private data class IpProfile(
     val name: String,
-    val alias: String,
     val ip: String,
     val mask: String,
     val gateway: String,
@@ -383,11 +409,11 @@ private fun AdapterPage() {
             Field("方案名称", profileName) { profileName = it }
             Button(
                 onClick = {
-                    if (profileName.isNotBlank() && selected.isNotBlank() && validIpv4(ip) && validMask(mask)) {
-                        val profile = IpProfile(profileName, selected, ip, mask, gateway, dns)
+                    if (profileName.isNotBlank() && validIpv4(ip) && validMask(mask)) {
+                        val profile = IpProfile(profileName.trim(), ip.trim(), mask.trim(), gateway.trim(), dns.trim())
                         profiles = profiles + profile
                         ProfileStore.save(profiles)
-                        notice = "配置方案已保存：${profile.name}"
+                        notice = "配置方案已保存（不绑定网络适配器）：${profile.name}"
                         profileName = ""
                     } else notice = "请填写方案名称、有效 IP 和子网掩码。"
                 },
@@ -402,20 +428,30 @@ private fun AdapterPage() {
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(profile.name, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                        Text("${profile.alias}\n${profile.ip} / ${profile.mask}", color = Light)
+                        Text("${profile.ip} / ${profile.mask}\n网关：${profile.gateway.ifBlank { "未设置" }}  DNS：${profile.dns.ifBlank { "未设置" }}", color = Light)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = {
-                                selected = profile.alias
+                            OutlinedButton(onClick = {
                                 ip = profile.ip
                                 mask = profile.mask
                                 gateway = profile.gateway
                                 dns = profile.dns
-                                scope.launch {
-                                    val result = applyStaticIp(profile.alias, profile.ip, profile.mask, profile.gateway, profile.dns)
-                                    notice = if (result.startsWith("配置失败")) result.lineSequence().first()
-                                    else "已提交配置方案，请确认管理员权限提示。"
+                                notice = "已载入方案。选择上方以太网适配器后，可应用此配置。"
+                            }) { Text("载入方案") }
+                            Button(onClick = {
+                                ip = profile.ip
+                                mask = profile.mask
+                                gateway = profile.gateway
+                                dns = profile.dns
+                                if (selected.isBlank()) {
+                                    notice = "方案已载入，请先选择一个以太网适配器，再点击应用静态 IP。"
+                                } else {
+                                    scope.launch {
+                                        val result = applyStaticIp(selected, profile.ip, profile.mask, profile.gateway, profile.dns)
+                                        notice = if (result.startsWith("配置失败")) result.lineSequence().first()
+                                        else "已向当前网卡 $selected 提交配置，请确认管理员权限提示。"
+                                    }
                                 }
-                            }) { Text("一键应用") }
+                            }) { Text("应用到当前网卡") }
                             OutlinedButton(onClick = {
                                 profiles = profiles.toMutableList().also { it.removeAt(index) }
                                 ProfileStore.save(profiles)
@@ -426,7 +462,7 @@ private fun AdapterPage() {
                 }
             }
             if (notice.isNotBlank()) {
-                Text(notice, color = if (notice.contains("失败") || notice.contains("请填写")) Color(0xFFFFC56B) else Color(0xFF8BE0B0))
+                Text(notice, color = if (notice.contains("失败") || notice.contains("请填写") || notice.contains("请先")) Color(0xFFFFC56B) else Color(0xFF8BE0B0))
             }
         }
     }
@@ -1228,77 +1264,139 @@ private object MacVendor {
    版本更新
    ========================= */
 
+private data class ReleaseInfo(
+    val tag: String,
+    val pageUrl: String,
+    val notes: String,
+    val portableUrl: String,
+    val checksumUrl: String
+)
+
 @Composable
 private fun UpdatePage() {
-    var api by remember { mutableStateOf(DEFAULT_RELEASE_API) }
-
-    var result by remember {
-        mutableStateOf(
-            "当前版本：v$APP_VERSION\n请填写自己的 GitHub Releases API 地址。"
-        )
-    }
-
+    var result by remember { mutableStateOf("当前版本：v$APP_VERSION\n点击“检查更新”获取 GitHub Releases 最新版本。") }
+    var release by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    Field("GitHub Releases API 地址", api) { api = it }
-
-    Button(
-        onClick = {
-            scope.launch {
-                result = checkLatestRelease(api)
-            }
+    fun check() {
+        scope.launch {
+            checking = true
+            release = null
+            val checked = fetchLatestRelease(DEFAULT_RELEASE_API)
+            release = checked.first
+            result = checked.second
+            checking = false
         }
-    ) {
-        Text("检查更新")
     }
 
-    OutputBox(result)
+    LaunchedEffect(Unit) { check() }
 
-    Text(
-        "只检查版本，不会静默下载或安装。",
-        color = Light
-    )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        InfoCard(
+            "GitHub 自动更新",
+            "仓库：wongvince/nettoo1\n启动此页面时自动检查，也可以手动检查。发现新版后由你确认下载；下载完成后退出软件并解压覆盖便携版目录。"
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { check() }, enabled = !checking && !downloading) {
+                Text(if (checking) "检查中…" else "检查更新")
+            }
+            OutlinedButton(onClick = {
+                try { Desktop.getDesktop().browse(URI(RELEASE_PAGE_URL)) }
+                catch (_: Exception) { result = "无法打开浏览器，请手动访问：$RELEASE_PAGE_URL" }
+            }) { Text("打开 GitHub Releases") }
+        }
+        OutputBox(result)
+        release?.let { info ->
+            InfoCard("最新版本：${info.tag}", info.notes.ifBlank { "此版本没有填写更新说明。" })
+            Button(
+                enabled = !downloading && info.portableUrl.isNotBlank() && info.checksumUrl.isNotBlank(),
+                onClick = {
+                    scope.launch {
+                        downloading = true
+                        result = downloadAndVerifyPortable(info)
+                        downloading = false
+                    }
+                }
+            ) { Text(if (downloading) "正在下载并校验…" else "下载便携版更新（SHA-256 校验）") }
+            if (info.portableUrl.isBlank()) Text("该 Release 没有便携版 ZIP 资产。", color = Color(0xFFFFC56B))
+        }
+        Text("安装版可在 GitHub Releases 下载；便携版下载后请先退出软件，再将 ZIP 解压覆盖原程序目录。请勿删除用户目录下的 .networktoolkit 数据文件夹。", color = Light)
+    }
 }
 
-private suspend fun checkLatestRelease(api: String): String =
+private suspend fun fetchLatestRelease(api: String): Pair<ReleaseInfo?, String> =
     withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
         try {
-            val connection = URL(api).openConnection() as HttpURLConnection
-            connection.connectTimeout = 6000
-            connection.readTimeout = 6000
-            connection.setRequestProperty(
-                "Accept",
-                "application/vnd.github+json"
-            )
-            connection.setRequestProperty(
-                "User-Agent",
-                "NetworkToolkit/$APP_VERSION"
-            )
-
-            val body = connection.inputStream
-                .bufferedReader(Charsets.UTF_8)
-                .readText()
-
-            connection.disconnect()
-
-            val tag = Regex(
-                "\"tag_name\"\\s*:\\s*\"([^\"]+)\""
-            ).find(body)?.groupValues?.get(1)
-                ?: return@withContext "无法读取 tag_name。请检查 API 地址。"
-
-            val html = Regex(
-                "\"html_url\"\\s*:\\s*\"([^\"]+)\""
-            ).find(body)?.groupValues?.get(1).orEmpty()
-
-            if (tag.trimStart('v') == APP_VERSION) {
-                "当前已是最新版本：$tag"
-            } else {
-                "发现新版本：$tag\n当前版本：v$APP_VERSION\nRelease：$html"
+            connection = URL(api).openConnection() as HttpURLConnection
+            connection.connectTimeout = 10000
+            connection.readTimeout = 15000
+            connection.setRequestProperty("Accept", "application/vnd.github+json")
+            connection.setRequestProperty("User-Agent", "NetworkToolkit/$APP_VERSION")
+            val status = connection.responseCode
+            if (status !in 200..299) return@withContext null to "检查失败：GitHub API 返回 HTTP $status。请确认仓库公开且已发布 Release。"
+            val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            fun field(name: String): String = Regex("\"$name\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")
+                .find(body)?.groupValues?.get(1)?.replace("\\n", "\n")?.replace("\\r", "")?.replace("\\\"", "\"") ?: ""
+            val tag = field("tag_name")
+            if (tag.isBlank()) return@withContext null to "无法读取最新版本号。请先在 GitHub 创建正式 Release。"
+            val page = field("html_url").ifBlank { RELEASE_PAGE_URL }
+            val notes = field("body").take(1800)
+            val assetsBlock = Regex("\"assets\"\\s*:\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL).find(body)?.groupValues?.get(1).orEmpty()
+            fun assetUrl(fileName: String): String {
+                val assetPattern = Regex("\\{\\s*\"url\"\\s*:\\s*\"[^\"]+\".*?\"name\"\\s*:\\s*\"([^\"]+)\".*?\"browser_download_url\"\\s*:\\s*\"([^\"]+)\"", RegexOption.DOT_MATCHES_ALL)
+                return assetPattern.findAll(assetsBlock)
+                    .firstOrNull { it.groupValues[1] == fileName }
+                    ?.groupValues?.get(2).orEmpty()
             }
+            val portableName = "NetworkToolkit-Windows-x64-Portable.zip"
+            val info = ReleaseInfo(tag, page, notes, assetUrl(portableName), assetUrl("SHA256SUMS.txt"))
+            val latestVersion = tag.removePrefix("v").removePrefix("V")
+            val message = if (latestVersion == APP_VERSION) "当前已是最新版本：v$APP_VERSION" else "发现新版本：$tag\n当前版本：v$APP_VERSION\nRelease：$page\n\n请确认后下载更新。"
+            info to message
         } catch (e: Exception) {
-            "检查失败：${e.message}"
+            null to "检查更新失败：${e.message ?: e.javaClass.simpleName}\n请检查网络连接，或稍后重试。"
+        } finally {
+            connection?.disconnect()
         }
     }
+
+private suspend fun downloadAndVerifyPortable(info: ReleaseInfo): String = withContext(Dispatchers.IO) {
+    try {
+        val downloads = File(System.getProperty("user.home"), "Downloads")
+        if (!downloads.exists()) downloads.mkdirs()
+        val zip = File(downloads, "NetworkToolkit-${info.tag}-Windows-x64-Portable.zip")
+        val checksumFile = File(downloads, "NetworkToolkit-${info.tag}-SHA256SUMS.txt")
+        fun download(url: String, target: File) {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connectTimeout = 15000
+            conn.readTimeout = 60000
+            conn.setRequestProperty("User-Agent", "NetworkToolkit/$APP_VERSION")
+            try {
+                if (conn.responseCode !in 200..299) error("下载失败，HTTP ${conn.responseCode}")
+                conn.inputStream.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+            } finally { conn.disconnect() }
+        }
+        download(info.portableUrl, zip)
+        download(info.checksumUrl, checksumFile)
+        val checksumLine = checksumFile.readLines().firstOrNull { it.contains("NetworkToolkit-Windows-x64-Portable.zip") }
+            ?: error("SHA256SUMS.txt 中没有找到便携版 ZIP 的校验值")
+        val expected = Regex("(?i)^([0-9a-f]{64})").find(checksumLine.trim())?.groupValues?.get(1)
+            ?: error("SHA256SUMS.txt 中的 SHA-256 格式无效")
+        val actual = MessageDigest.getInstance("SHA-256").digest(zip.readBytes())
+            .joinToString("") { "%02x".format(it) }
+        if (!actual.equals(expected, ignoreCase = true)) {
+            zip.delete()
+            error("SHA-256 校验失败，已删除下载文件。请重新检查更新。")
+        }
+        Desktop.getDesktop().open(downloads)
+        "下载完成，SHA-256 校验通过。\n文件：${zip.absolutePath}\n已打开下载文件夹。请退出软件后解压 ZIP，并覆盖旧版程序目录。用户数据和授权保存在用户目录 .networktoolkit，不要删除该目录。"
+    } catch (e: Exception) {
+        "更新下载失败：${e.message ?: e.javaClass.simpleName}"
+    }
+}
 
 /* =========================
    通用命令执行
@@ -1485,16 +1583,12 @@ private object ProfileStore {
         return try {
             file.readLines().mapNotNull { line ->
                 val parts = line.split("\t")
-                if (parts.size == 6) {
-                    IpProfile(
-                        parts[0],
-                        parts[1],
-                        parts[2],
-                        parts[3],
-                        parts[4],
-                        parts[5]
-                    )
-                } else null
+                when (parts.size) {
+                    5 -> IpProfile(parts[0], parts[1], parts[2], parts[3], parts[4])
+                    // 兼容旧版六列格式：第二列原为网卡名称，读取时忽略，不再绑定网卡。
+                    6 -> IpProfile(parts[0], parts[2], parts[3], parts[4], parts[5])
+                    else -> null
+                }
             }
         } catch (_: Exception) {
             emptyList()
@@ -1508,7 +1602,6 @@ private object ProfileStore {
             list.joinToString("\n") {
                 listOf(
                     it.name,
-                    it.alias,
                     it.ip,
                     it.mask,
                     it.gateway,
@@ -1523,6 +1616,200 @@ private object ProfileStore {
 /* =========================
    授权管理
    ========================= */
+
+private data class TrialStatus(
+    val active: Boolean,
+    val remainingMillis: Long
+)
+
+private fun formatTrialRemaining(millis: Long): String {
+    val totalMinutes = (millis.coerceAtLeast(0L) + 59_999L) / 60_000L
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return "${hours}小时${minutes}分钟"
+}
+
+/**
+ * Offline 24-hour trial state, mirrored in two independent Windows locations:
+ *   - %ProgramData%\NetworkToolkit\trial.dat
+ *   - HKCU\Software\NetworkToolkit\TrialState
+ * The identical DPAPI LocalMachine-protected blob must exist in BOTH places.
+ * Missing/partial/conflicting state fails closed; it is never treated as a new trial.
+ * This raises reset cost but cannot defeat deliberate deletion of every local copy,
+ * OS reinstallation, snapshots, or binary patching in a fully offline application.
+ */
+private object TrialManager {
+    private const val TRIAL_MILLIS = 24L * 60L * 60L * 1000L
+    private const val REG_KEY = "HKCU\\Software\\NetworkToolkit"
+    private const val REG_VALUE = "TrialState"
+    private const val LEGACY_SALT = "NetworkToolkit-Trial-v1-LocalIntegrity"
+    private val legacyFile = File(System.getProperty("user.home"), ".networktoolkit/trial.dat")
+    private val stateFile = File(
+        System.getenv("ProgramData")?.takeIf { it.isNotBlank() } ?: "C:\\ProgramData",
+        "NetworkToolkit\\trial.dat"
+    )
+
+    @Synchronized
+    fun evaluate(): TrialStatus {
+        if (!System.getProperty("os.name", "").startsWith("Windows", ignoreCase = true)) {
+            return TrialStatus(false, 0L)
+        }
+        return try {
+            val fileExists = stateFile.isFile
+            val registryValue = readRegistry()
+            val registryExists = registryValue != null
+
+            // First launch only: initialize when BOTH independent stores are absent.
+            if (!fileExists && !registryExists) {
+                // Preserve an existing v1.2.0 trial instead of granting a fresh 24 hours on upgrade.
+                if (legacyFile.isFile) return migrateLegacyTrial()
+                val now = System.currentTimeMillis()
+                return if (persist(now, now)) TrialStatus(true, TRIAL_MILLIS)
+                else TrialStatus(false, 0L)
+            }
+
+            // A missing copy is evidence of tampering or an incomplete write, not a fresh trial.
+            if (!fileExists || !registryExists) return TrialStatus(false, 0L)
+
+            val fileBlob = stateFile.readText(Charsets.US_ASCII).trim()
+            if (fileBlob.isBlank() || registryValue!!.isBlank() ||
+                !constantTimeEquals(fileBlob, registryValue)) return TrialStatus(false, 0L)
+
+            val payload = dpapi("unprotect", fileBlob) ?: return TrialStatus(false, 0L)
+            val fields = payload.split('|')
+            if (fields.size != 4 || fields[0] != "NTTRIAL2") return TrialStatus(false, 0L)
+            if (!constantTimeEquals(fields[1], LicenseManager.deviceId())) return TrialStatus(false, 0L)
+            val start = fields[2].toLongOrNull() ?: return TrialStatus(false, 0L)
+            val lastSeen = fields[3].toLongOrNull() ?: return TrialStatus(false, 0L)
+            if (start <= 0L || lastSeen < start) return TrialStatus(false, 0L)
+
+            val now = System.currentTimeMillis()
+            // Any wall-clock rollback relative to the last successful run expires the trial.
+            if (now < lastSeen) return TrialStatus(false, 0L)
+            val elapsed = now - start
+            if (elapsed >= TRIAL_MILLIS) return TrialStatus(false, 0L)
+
+            if (!persist(start, now)) return TrialStatus(false, 0L)
+            TrialStatus(true, TRIAL_MILLIS - elapsed)
+        } catch (_: Exception) {
+            TrialStatus(false, 0L)
+        }
+    }
+
+    private fun migrateLegacyTrial(): TrialStatus {
+        return try {
+            val fields = legacyFile.readText(Charsets.UTF_8).trim().split('|')
+            if (fields.size != 3) return TrialStatus(false, 0L)
+            val start = fields[0].toLongOrNull() ?: return TrialStatus(false, 0L)
+            val lastSeen = fields[1].toLongOrNull() ?: return TrialStatus(false, 0L)
+            if (start <= 0L || lastSeen < start ||
+                !constantTimeEquals(fields[2], legacySignature(start, lastSeen))) return TrialStatus(false, 0L)
+            val now = System.currentTimeMillis()
+            if (now < lastSeen) return TrialStatus(false, 0L)
+            val elapsed = now - start
+            if (elapsed >= TRIAL_MILLIS) return TrialStatus(false, 0L)
+            if (!persist(start, now)) return TrialStatus(false, 0L)
+            TrialStatus(true, TRIAL_MILLIS - elapsed)
+        } catch (_: Exception) {
+            TrialStatus(false, 0L)
+        }
+    }
+
+    private fun legacySignature(start: Long, lastSeen: Long): String {
+        val source = "$LEGACY_SALT|${LicenseManager.deviceId()}|$start|$lastSeen"
+        return MessageDigest.getInstance("SHA-256")
+            .digest(source.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun persist(start: Long, lastSeen: Long): Boolean {
+        return try {
+            val plain = "NTTRIAL2|${LicenseManager.deviceId()}|$start|$lastSeen"
+            val blob = dpapi("protect", plain) ?: return false
+            stateFile.parentFile.mkdirs()
+            val temp = File(stateFile.parentFile, "trial.dat.tmp")
+            temp.writeText(blob, Charsets.US_ASCII)
+            try {
+                java.nio.file.Files.move(
+                    temp.toPath(), stateFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: Exception) {
+                java.nio.file.Files.move(
+                    temp.toPath(), stateFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                )
+            }
+            writeRegistry(blob) && stateFile.isFile &&
+                constantTimeEquals(stateFile.readText(Charsets.US_ASCII).trim(), readRegistry().orEmpty())
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Uses Windows DPAPI LocalMachine scope; entropy binds the blob to this device ID. */
+    private fun dpapi(operation: String, value: String): String? {
+        val script = if (operation == "protect") {
+            """
+            ${'$'}ErrorActionPreference = 'Stop'
+            Add-Type -AssemblyName System.Security
+            ${'$'}data = [Text.Encoding]::UTF8.GetBytes(${'$'}env:NT_TRIAL_VALUE)
+            ${'$'}entropy = [Text.Encoding]::UTF8.GetBytes(${'$'}env:NT_TRIAL_DEVICE)
+            ${'$'}out = [Security.Cryptography.ProtectedData]::Protect(${'$'}data, ${'$'}entropy, [Security.Cryptography.DataProtectionScope]::LocalMachine)
+            [Convert]::ToBase64String(${'$'}out)
+            """.trimIndent()
+        } else {
+            """
+            ${'$'}ErrorActionPreference = 'Stop'
+            Add-Type -AssemblyName System.Security
+            ${'$'}data = [Convert]::FromBase64String(${'$'}env:NT_TRIAL_VALUE)
+            ${'$'}entropy = [Text.Encoding]::UTF8.GetBytes(${'$'}env:NT_TRIAL_DEVICE)
+            ${'$'}out = [Security.Cryptography.ProtectedData]::Unprotect(${'$'}data, ${'$'}entropy, [Security.Cryptography.DataProtectionScope]::LocalMachine)
+            [Text.Encoding]::UTF8.GetString(${'$'}out)
+            """.trimIndent()
+        }
+        return try {
+            val encoded = Base64.getEncoder().encodeToString(script.toByteArray(Charsets.UTF_16LE))
+            val process = ProcessBuilder(
+                "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded
+            ).redirectErrorStream(true).apply {
+                environment()["NT_TRIAL_VALUE"] = value
+                environment()["NT_TRIAL_DEVICE"] = LicenseManager.deviceId()
+            }.start()
+            if (!process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                null
+            } else {
+                val output = process.inputStream.bufferedReader(Charsets.UTF_8).readText().trim()
+                if (process.exitValue() != 0 || output.isBlank()) null else output.lineSequence().last().trim()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun readRegistry(): String? {
+        return try {
+            val process = ProcessBuilder("reg.exe", "query", REG_KEY, "/v", REG_VALUE)
+                .redirectErrorStream(true).start()
+            if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) || process.exitValue() != 0) null
+            else process.inputStream.bufferedReader().readText().lineSequence()
+                .firstOrNull { it.contains(REG_VALUE, ignoreCase = true) }
+                ?.trim()?.split(Regex("\\s+"))?.lastOrNull()
+        } catch (_: Exception) { null }
+    }
+
+    private fun writeRegistry(value: String): Boolean = try {
+        val process = ProcessBuilder(
+            "reg.exe", "add", REG_KEY, "/v", REG_VALUE, "/t", "REG_SZ", "/d", value, "/f"
+        ).redirectErrorStream(true).start()
+        process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0
+    } catch (_: Exception) { false }
+
+    private fun constantTimeEquals(a: String, b: String): Boolean =
+        MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
+}
 
 private object LicenseManager {
     private val file = File(
